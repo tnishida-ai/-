@@ -137,7 +137,9 @@ M = {}
 
 WALL_SCALE = 2.0   # 壁の高さの倍率 (元モデル 1.2m → 2.4m)
 DOOR_WALL = 'Wall.001'   # コンテナ扉を付ける壁 (北側外周、作業室の棚の後ろ)
-DOOR_X = (9.3, 11.5)     # 扉開口の X 範囲 (右寄り)
+DOOR_X = (9.3, 11.5)     # 観音開き扉の開口の X 範囲 (右寄り)
+SINGLE_DOOR_X = (7.15, 8.05)   # 片開き扉の開口の X 範囲 (観音開き扉の左側)
+SINGLE_DOOR_TOP = 1.95         # 片開き扉の開口上端
 
 
 def build_materials():
@@ -389,6 +391,8 @@ def build_materials():
     nt.links.new(r_.outputs['Color'], b.inputs['Base Color'])
     M['hazard'] = mat
     M['bolt_head'] = new_material('R_ボルト頭', (0.62, 0.55, 0.42), 0.6)[0]
+    M['chrome'] = new_material('R_クローム', (0.9, 0.9, 0.9), 0.08, 1.0)[0]
+    M['knob_beige'] = new_material('R_内開放ノブ', (0.78, 0.7, 0.52), 0.4)[0]
     M['plate'] = new_material('R_銘板', (0.45, 0.42, 0.38), 0.4, 0.8)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
@@ -498,7 +502,8 @@ def shrink_mesh(ob, eps):
 def build_corrugated(ob, coll, gap=None):
     """コンテナの台形波板壁。壁の箱の範囲を、両面とも同じ波形を持つ鋼板で置き換える
 
-    gap=(ua, ub) を渡すと、その区間 (長手方向) は波板と上レールを抜く (扉の開口用)。下レールは敷居として通す。
+    gap=(ua, ub) またはそのリストを渡すと、その区間 (長手方向) は波板と上レールを抜く (扉の開口用)。
+    下レールは敷居として通す。
     """
     mn, mx = bounds(ob)
     along_x = (mx.x - mn.x) >= (mx.y - mn.y)
@@ -508,7 +513,12 @@ def build_corrugated(ob, coll, gap=None):
     D = 0.036                       # 波の深さ
     seg = (0.10, 0.035, 0.108, 0.035)   # 山の平部 / 斜面 / 谷の平部 / 斜面 (ピッチ 278mm)
     depth_at = (0.0, D, D, 0.0)
-    ranges = [(u0, u1)] if gap is None else [(u0, gap[0]), (gap[1], u1)]
+    gaps = [] if gap is None else ([gap] if isinstance(gap[0], (int, float)) else sorted(gap))
+    ranges, cur = [], u0
+    for ga, gb in gaps:
+        ranges.append((cur, ga))
+        cur = gb
+    ranges.append((cur, u1))
     verts, faces = [], []
 
     def P(uu, tt, zz):
@@ -656,6 +666,76 @@ def build_container_door(coll, xa, xb, t0, t1, zt):
     mb.box_mm((lb_r - 0.2, yc1 + 0.014, 0.9), (lb_r - 0.1, yc1 + 0.018, 1.05), M['plate'])
     door = mb.build('R_コンテナ扉', coll, bevel=0.004)
     return door
+
+
+def build_single_door(coll, xa, xb, t0, t1, zt, top):
+    """冷凍コンテナ風の片開き扉 (X 方向の壁、屋外側 = +Y)
+
+    外側: 平らな白い扉 + アルミ額縁 (リベット)、亜鉛メッキの大型ヒンジ 3 か所 (屋外から見て右 = -X 側)、
+          クロームのレバーラッチと受け、引き手、下部の黒いプランジャー
+    内側: ステンレスの扉 (縦溝で 3 分割)、ベージュのパドル付き内開放ノブ、ステンレスの敷居
+    """
+    cm = M['container']
+    zb = 0.1
+    fw = 0.1
+    mb = MB()
+    # 周囲の平らな枠 (壁面より 4mm 出す)
+    for xa_, xb_ in ((xa - fw, xa), (xb, xb + fw)):
+        mb.box_mm((xa_, t0 - 0.016, 0.085), (xb_, t1 + 0.016, zt), cm)
+    mb.box_mm((xa - fw, t0 - 0.016, zt), (xb + fw, t1 + 0.016, top), cm)
+    mb.box_mm((xa, t0 - 0.016, 0.085), (xb, t1 + 0.016, zb), M['steel'])            # 敷居
+    # アルミ額縁 (外側) + リベット
+    yo = t1 + 0.016
+    for p0, p1 in (((xa - 0.03, zb - 0.01), (xa, zt + 0.03)), ((xb, zb - 0.01), (xb + 0.03, zt + 0.03)),
+                   ((xa - 0.03, zt), (xb + 0.03, zt + 0.03))):
+        mb.box_mm((p0[0], yo, p0[1]), (p1[0], yo + 0.008, p1[1]), M['alu'])
+    # 扉本体
+    la, lb = xa + 0.006, xb - 0.006
+    h0, h1 = zb + 0.004, zt - 0.006
+    mb.box_mm((la, t0 + 0.01, h0), (lb, t1 + 0.006, h1), cm)
+    mb.box_mm((la + 0.02, t1 + 0.006, h0 + 0.02), (lb - 0.02, t1 + 0.014, h1 - 0.02), M['white_panel'])   # 外皮
+    for k in range(9):                                                                   # 外皮のリベット
+        zz = h0 + 0.05 + k * (h1 - h0 - 0.1) / 8
+        for xx in (la + 0.035, lb - 0.035):
+            mb.cyl((xx, t1 + 0.014, zz), (xx, t1 + 0.018, zz), 0.005, M['alu'], 8)
+    for k in range(6):
+        xx = la + 0.05 + k * (lb - la - 0.1) / 5
+        for zz in (h0 + 0.035, h1 - 0.035):
+            mb.cyl((xx, t1 + 0.014, zz), (xx, t1 + 0.018, zz), 0.005, M['alu'], 8)
+    # ヒンジ 3 か所 (-X 側)
+    for zz in (h0 + 0.3, (h0 + h1) / 2, h1 - 0.3):
+        mb.box_mm((la + 0.02, t1 + 0.014, zz - 0.055), (la + 0.25, t1 + 0.026, zz + 0.055), M['galv_tube'])
+        mb.box_mm((xa - 0.09, t1 + 0.016, zz - 0.06), (xa - 0.02, t1 + 0.03, zz + 0.06), M['white_panel'])
+        mb.cyl((xa - 0.005, t1 + 0.035, zz - 0.09), (xa - 0.005, t1 + 0.035, zz + 0.09), 0.02, M['galv_tube'], 12)
+        for i in range(3):
+            for dz in (-0.03, 0.03):
+                xx = la + 0.06 + i * 0.07
+                mb.cyl((xx, t1 + 0.026, zz + dz), (xx, t1 + 0.034, zz + dz), 0.011, M['galv_tube'], 6)
+    # レバーラッチ (+X 側) + 受け + 引き手
+    lz = 1.08
+    mb.box_mm((lb - 0.24, t1 + 0.014, lz - 0.03), (lb - 0.03, t1 + 0.034, lz + 0.03), M['chrome'])
+    mb.box_mm((lb - 0.33, t1 + 0.034, lz - 0.012), (lb - 0.05, t1 + 0.046, lz + 0.012), M['chrome'])
+    mb.box_mm((xb + 0.005, t1 + 0.016, lz - 0.04), (xb + 0.07, t1 + 0.04, lz + 0.04), M['chrome'])
+    gx = lb - 0.12
+    mb.box_mm((gx - 0.025, t1 + 0.014, lz - 0.1), (gx + 0.025, t1 + 0.02, lz - 0.07), M['chrome'])
+    mb.box_mm((gx - 0.025, t1 + 0.014, lz - 0.3), (gx + 0.025, t1 + 0.02, lz - 0.27), M['chrome'])
+    mb.cyl((gx, t1 + 0.05, lz - 0.09), (gx, t1 + 0.05, lz - 0.28), 0.012, M['chrome'], 10)
+    for zz in (lz - 0.09, lz - 0.28):
+        mb.cyl((gx, t1 + 0.02, zz), (gx, t1 + 0.05, zz), 0.01, M['chrome'], 8)
+    # 下部の黒いプランジャー
+    px = (la + lb) / 2
+    mb.cyl((px, t1 + 0.014, h0 + 0.12), (px, t1 + 0.05, h0 + 0.12), 0.025, M['black_plastic'], 16)
+    mb.cyl((px, t1 + 0.05, h0 + 0.12), (px, t1 + 0.052, h0 + 0.12), 0.018, M['white_panel'], 16)
+    # 内側: ステンレス面 + 縦溝 + 内開放ノブ
+    yi = t0 + 0.01
+    mb.box_mm((la + 0.015, yi - 0.006, h0 + 0.015), (lb - 0.015, yi, h1 - 0.015), M['steel'])
+    for f in (1 / 3, 2 / 3):
+        xx = la + (lb - la) * f
+        mb.box_mm((xx - 0.004, yi - 0.009, h0 + 0.03), (xx + 0.004, yi - 0.006, h1 - 0.03), M['steel_worn'])
+    mb.box_mm((lb - 0.14, yi - 0.03, lz - 0.035), (lb - 0.07, yi - 0.006, lz + 0.035), M['chrome'])
+    mb.sphere((lb - 0.17, yi - 0.035, lz - 0.01), (0.05, 0.012, 0.035), M['knob_beige'], 16, 8)
+    mb.cyl(((la + lb) / 2, yi - 0.006, lz + 0.1), ((la + lb) / 2, yi - 0.012, lz + 0.1), 0.006, M['chrome'], 8)
+    return mb.build('R_片開き扉', coll, bevel=0.003)
 
 
 def wall_with_holes(name, coll, x0, x1, y0, y1, z0, z1, holes, mat):
@@ -1721,8 +1801,11 @@ def main():
                 # 外周 = コンテナの壁 → 台形波板 (仕切り壁はクリーンルームパネルのまま)
                 if n == DOOR_WALL:
                     xa, xb = DOOR_X
-                    u0, u1, t0, t1, z0, z1 = build_corrugated(ob, real, gap=(xa - 0.05, xb + 0.05))
+                    sa, sb = SINGLE_DOOR_X
+                    u0, u1, t0, t1, z0, z1 = build_corrugated(
+                        ob, real, gap=[(xa - 0.05, xb + 0.05), (sa - 0.05, sb + 0.05)])
                     build_container_door(real, xa, xb, t0, t1, z1 - 0.104)
+                    build_single_door(real, sa, sb, t0, t1, SINGLE_DOOR_TOP, z1 + 0.004)
                 else:
                     build_corrugated(ob, real)
                 perimeter_walls.append(ob)
