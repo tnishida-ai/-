@@ -136,6 +136,8 @@ def math_node(nt, op, a, b=None):
 M = {}
 
 WALL_SCALE = 2.0   # 壁の高さの倍率 (元モデル 1.2m → 2.4m)
+DOOR_WALL = 'Wall.001'   # コンテナ扉を付ける壁 (北側外周、作業室の棚の後ろ)
+DOOR_X = (9.3, 11.5)     # 扉開口の X 範囲 (右寄り)
 
 
 def build_materials():
@@ -371,6 +373,23 @@ def build_materials():
     nt.links.new(map_range(nt, sp, 0.3, 0.7, 0.3, 0.55), b.inputs['Roughness'])
     M['galv_tube'] = mat
     M['red_tape'] = new_material('R_赤テープ', (0.75, 0.03, 0.04), 0.5)[0]
+    # コンテナ扉まわり
+    mat, nt, b = new_material('R_注意ステッカー', (0.9, 0.7, 0.02), 0.5)
+    wv = nt.nodes.new('ShaderNodeTexWave')
+    wv.bands_direction = 'DIAGONAL'
+    wv.inputs['Scale'].default_value = 1.2
+    wv.inputs['Distortion'].default_value = 0.0
+    nt.links.new(tex_coord(nt, 'Object'), wv.inputs['Vector'])
+    r_ = nt.nodes.new('ShaderNodeValToRGB')
+    r_.color_ramp.interpolation = 'CONSTANT'
+    r_.color_ramp.elements[0].color = (0.9, 0.68, 0.02, 1)
+    r_.color_ramp.elements[1].position = 0.5
+    r_.color_ramp.elements[1].color = (0.02, 0.02, 0.02, 1)
+    nt.links.new(wv.outputs['Fac'], r_.inputs['Fac'])
+    nt.links.new(r_.outputs['Color'], b.inputs['Base Color'])
+    M['hazard'] = mat
+    M['bolt_head'] = new_material('R_ボルト頭', (0.62, 0.55, 0.42), 0.6)[0]
+    M['plate'] = new_material('R_銘板', (0.45, 0.42, 0.38), 0.4, 0.8)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
@@ -476,8 +495,11 @@ def shrink_mesh(ob, eps):
                        for i in range(3)])
 
 
-def build_corrugated(ob, coll):
-    """コンテナの台形波板壁。壁の箱の範囲を、両面とも同じ波形を持つ鋼板で置き換える"""
+def build_corrugated(ob, coll, gap=None):
+    """コンテナの台形波板壁。壁の箱の範囲を、両面とも同じ波形を持つ鋼板で置き換える
+
+    gap=(ua, ub) を渡すと、その区間 (長手方向) は波板と上レールを抜く (扉の開口用)。下レールは敷居として通す。
+    """
     mn, mx = bounds(ob)
     along_x = (mx.x - mn.x) >= (mx.y - mn.y)
     u0, u1 = (mn.x, mx.x) if along_x else (mn.y, mx.y)
@@ -485,28 +507,46 @@ def build_corrugated(ob, coll):
     z0, z1 = max(mn.z, 0.0) + 0.001, mx.z
     D = 0.036                       # 波の深さ
     seg = (0.10, 0.035, 0.108, 0.035)   # 山の平部 / 斜面 / 谷の平部 / 斜面 (ピッチ 278mm)
-    prof = [(u0, 0.0)]
-    u, k = u0, 0
     depth_at = (0.0, D, D, 0.0)
-    while u < u1:
-        u = min(u + seg[k % 4], u1)
-        prof.append((u, depth_at[k % 4]))
-        k += 1
+    ranges = [(u0, u1)] if gap is None else [(u0, gap[0]), (gap[1], u1)]
     verts, faces = [], []
 
     def P(uu, tt, zz):
         return (uu, tt, zz) if along_x else (tt, uu, zz)
-    for uu, c in prof:
-        lo, hi = t0 + c, t1 - D + c
-        verts += [P(uu, lo, z0), P(uu, hi, z0), P(uu, lo, z1), P(uu, hi, z1)]
-    for i in range(len(prof) - 1):
-        a, b = 4 * i, 4 * (i + 1)
-        faces += [(a, b, b + 2, a + 2),          # 面 lo
-                  (a + 1, a + 3, b + 3, b + 1),  # 面 hi
-                  (a, a + 1, b + 1, b),          # 下
-                  (a + 2, b + 2, b + 3, a + 3)]  # 上
-    e = 4 * (len(prof) - 1)
-    faces += [(0, 2, 3, 1), (e, e + 1, e + 3, e + 2)]
+    for ra, rb in ranges:
+        if rb - ra < 0.01:
+            continue
+        # 波の位相は壁全体 (u0 起点) で連続させる
+        prof = []
+        u, k = u0, 0
+        while u < rb:
+            nu = min(u + seg[k % 4], u1)
+            if nu > ra:
+                if not prof:
+                    t = (ra - u) / (nu - u)
+                    c0 = depth_at[(k - 1) % 4] if k else 0.0
+                    prof.append((ra, c0 + (depth_at[k % 4] - c0) * t))
+                if nu >= rb:
+                    t = (rb - u) / (nu - u)
+                    c0 = prof[-1][1] if u < ra else (depth_at[(k - 1) % 4] if k else 0.0)
+                    c0 = depth_at[(k - 1) % 4] if k else 0.0
+                    prof.append((rb, c0 + (depth_at[k % 4] - c0) * t))
+                    break
+                prof.append((nu, depth_at[k % 4]))
+            u = nu
+            k += 1
+        base = len(verts)
+        for uu, c in prof:
+            lo, hi = t0 + c, t1 - D + c
+            verts += [P(uu, lo, z0), P(uu, hi, z0), P(uu, lo, z1), P(uu, hi, z1)]
+        for i in range(len(prof) - 1):
+            a_, b_ = base + 4 * i, base + 4 * (i + 1)
+            faces += [(a_, b_, b_ + 2, a_ + 2),          # 面 lo
+                      (a_ + 1, a_ + 3, b_ + 3, b_ + 1),  # 面 hi
+                      (a_, a_ + 1, b_ + 1, b_),          # 下
+                      (a_ + 2, b_ + 2, b_ + 3, a_ + 3)]  # 上
+        e = base + 4 * (len(prof) - 1)
+        faces += [(base, base + 2, base + 3, base + 1), (e, e + 1, e + 3, e + 2)]
     me = bpy.data.meshes.new('R_波板_' + ob.name)
     me.from_pydata(verts, [], faces)
     me.materials.append(M['container'])
@@ -519,16 +559,103 @@ def build_corrugated(ob, coll):
     bv.limit_method = 'ANGLE'
     # 上下のレール (角パイプ)
     mb = MB()
-    def rail(za, zb):
+    def rail(za, zb, ua=u0, ub=u1):
         if along_x:
-            mb.box_mm((u0, t0 - 0.012, za), (u1, t1 + 0.012, zb), M['container'])
+            mb.box_mm((ua, t0 - 0.012, za), (ub, t1 + 0.012, zb), M['container'])
         else:
-            mb.box_mm((t0 - 0.012, u0, za), (t1 + 0.012, u1, zb), M['container'])
+            mb.box_mm((t0 - 0.012, ua, za), (t1 + 0.012, ub, zb), M['container'])
     if z1 - z0 > 0.3:
-        rail(z1 - 0.07, z1 + 0.004)
+        for ra, rb in ranges:
+            if rb - ra > 0.01:
+                rail(z1 - 0.07, z1 + 0.004, ra, rb)
         if z0 < 0.05:
             rail(0.0005, 0.085)
     mb.build('R_レール_' + ob.name, coll, bevel=0.006)
+    return (u0, u1, t0, t1, z0, z1)
+
+
+def build_container_door(coll, xa, xb, t0, t1, zt):
+    """コンテナの観音開き扉 (X 方向の壁、屋外側 = +Y)。xa..xb が開口、zt が開口上端
+
+    内側: 白い扉、横方向の波、縦框、上下の横板とボルト頭
+    外側: 横方向の波、ロッキングバー 2 本 x 2 枚、カムキーパー、ハンドル、ヒンジ、ガスケット、注意ステッカー、銘板
+    """
+    cm, rb, gv = M['container'], M['rubber'], M['galv_tube']
+    zb = 0.085
+    mb = MB()
+    fw = 0.1                                            # 枠 (縦枠) の幅
+    # 縦枠・ヘッダー (壁面より 4mm 出す)
+    for xa_, xb_ in ((xa - fw, xa), (xb, xb + fw)):
+        mb.box_mm((xa_, t0 - 0.016, zb), (xb_, t1 + 0.016, zt), cm)
+    top = zt + 0.104
+    mb.box_mm((xa - fw, t0 - 0.016, zt), (xb + fw, t1 + 0.016, top), cm)
+    # 注意ステッカー (外側ヘッダー)
+    for x in (xa + 0.15, xb - 0.45):
+        mb.box_mm((x, t1 + 0.016, zt + 0.025), (x + 0.3, t1 + 0.018, zt + 0.08), M['hazard'])
+    xm = (xa + xb) / 2
+    leaves = ((xa + 0.004, xm - 0.004, 'L'), (xm + 0.004, xb - 0.004, 'R'))
+    h0, h1 = zb + 0.005, zt - 0.005
+    yc0, yc1 = t0 + 0.02, t1 - 0.02                     # 扉本体の厚み
+    ext = []
+    for la, lb, side in leaves:
+        w = lb - la
+        mb.box_mm((la, yc0, h0), (lb, yc1, h1), cm)
+        # --- 内側 (-Y 面) ---
+        yi = yc0
+        for xa_, xb_ in ((la, la + 0.09), (lb - 0.09, lb)):          # 縦框
+            mb.box_mm((xa_, yi - 0.03, h0), (xb_, yi, h1), cm)
+        for za_, zb_ in ((h1 - 0.24, h1), (h0, h0 + 0.24)):             # 上下の横板
+            mb.box_mm((la + 0.09, yi - 0.022, za_), (lb - 0.09, yi, zb_), cm)
+            for zz in (za_ + 0.07, za_ + 0.15):
+                for xx in (la + 0.25, la + 0.33, lb - 0.33, lb - 0.25):
+                    mb.cyl((xx, yi - 0.022, zz), (xx, yi - 0.03, zz), 0.014, M['bolt_head'], 10)
+        z = h0 + 0.42
+        while z < h1 - 0.45:                                          # 横方向の波 (膨らみ)
+            mb.box_mm((la + 0.09, yi - 0.018, z), (lb - 0.09, yi, z + 0.16), cm)
+            z += 0.34
+        for zz, xs_ in ((h0 + 0.9, (la + 0.3, la + 0.38, lb - 0.38, lb - 0.3)), (h0 + 1.25, (la + 0.3, lb - 0.3))):
+            for xx in xs_:
+                mb.cyl((xx, yi - 0.018, zz), (xx, yi - 0.026, zz), 0.012, M['bolt_head'], 10)
+        # --- 外側 (+Y 面) ---
+        yo = yc1
+        z = h0 + 0.2
+        while z < h1 - 0.2:
+            mb.box_mm((la + 0.06, yo, z), (lb - 0.06, yo + 0.014, z + 0.13), cm)
+            z += 0.3
+        # ガスケット (外周)
+        for xa_, xb_ in ((la, la + 0.03), (lb - 0.03, lb)):
+            mb.box_mm((xa_, yo + 0.014, h0), (xb_, yo + 0.022, h1), rb)
+        for za_ in (h0, h1 - 0.03):
+            mb.box_mm((la, yo + 0.014, za_), (lb, yo + 0.022, za_ + 0.03), rb)
+        # ロッキングバー 2 本
+        for f in (0.3, 0.72):
+            bx = la + w * f
+            yb = yo + 0.05
+            mb.cyl((bx, yb, zb - 0.05), (bx, yb, top + 0.02), 0.017, gv, 12)
+            for zz in (zb + 0.12, top - 0.1):                          # カムキーパー
+                mb.box_mm((bx - 0.045, yo + 0.014, zz - 0.06), (bx + 0.045, yo + 0.06, zz + 0.06), gv)
+            for zz in (0.95, 1.55):                                     # バーガイド
+                mb.box_mm((bx - 0.04, yo + 0.014, zz - 0.03), (bx + 0.04, yo + 0.035, zz + 0.03), gv)
+            # ハンドル (下部)
+            mb.box_mm((bx - 0.02, yb - 0.01, 0.48), (bx + 0.02, yb + 0.035, 0.78), gv)
+            mb.box_mm((bx - 0.05, yo + 0.014, 0.62), (bx - 0.01, yo + 0.04, 0.7), gv)
+            # ハンドル受け
+            mb.box_mm((bx + 0.12, yo + 0.014, 0.66), (bx + 0.17, yo + 0.04, 0.78), gv)
+        # ヒンジ (外側の縦縁に 4 か所)
+        hx = la if side == 'L' else lb
+        for zz in (h0 + 0.2, h0 + 0.8, h0 + 1.4, h1 - 0.2):
+            sgn = -1 if side == 'L' else 1
+            mb.box_mm((min(hx, hx - sgn * 0.14), yo + 0.014, zz - 0.05), (max(hx, hx - sgn * 0.14), yo + 0.03, zz + 0.05), cm)
+            mb.cyl((hx + sgn * 0.02, yo + 0.03, zz - 0.07), (hx + sgn * 0.02, yo + 0.03, zz + 0.07), 0.018, cm, 10)
+        ext.append((la, lb))
+    # 中央の合わせ目 (黒)
+    mb.box_mm((xm - 0.004, yc0 - 0.001, h0), (xm + 0.004, yc1 + 0.001, h1), rb)
+    mb.box_mm((xm - 0.03, yc1 + 0.014, h0), (xm + 0.03, yc1 + 0.026, h1), rb)
+    # 屋外から見て左扉 (= +X 側) に銘板
+    (la_r, lb_r) = ext[1]
+    mb.box_mm((lb_r - 0.2, yc1 + 0.014, 0.9), (lb_r - 0.1, yc1 + 0.018, 1.05), M['plate'])
+    door = mb.build('R_コンテナ扉', coll, bevel=0.004)
+    return door
 
 
 def wall_with_holes(name, coll, x0, x1, y0, y1, z0, z1, holes, mat):
@@ -1592,7 +1719,12 @@ def main():
                 else (mx_.x < 0.25 or mn_.x > 11.75)
             if thin and on_perimeter and (mx_.z - mn_.z) > 1.0 and n not in ('Wall.022',):
                 # 外周 = コンテナの壁 → 台形波板 (仕切り壁はクリーンルームパネルのまま)
-                build_corrugated(ob, real)
+                if n == DOOR_WALL:
+                    xa, xb = DOOR_X
+                    u0, u1, t0, t1, z0, z1 = build_corrugated(ob, real, gap=(xa - 0.05, xb + 0.05))
+                    build_container_door(real, xa, xb, t0, t1, z1 - 0.104)
+                else:
+                    build_corrugated(ob, real)
                 perimeter_walls.append(ob)
                 move(ob, old)
                 continue
