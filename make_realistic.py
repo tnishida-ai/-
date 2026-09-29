@@ -228,11 +228,14 @@ def build_materials():
     M['acrylic'] = new_material('R_アクリル', (0.92, 0.95, 0.95), 0.05, transmission=1.0, ior=1.49)[0]
 
     # 黒色樹脂パレット
-    mat, nt, b = new_material('R_樹脂パレット', (0.02, 0.02, 0.022), 0.5)
+    mat, nt, b = new_material('R_樹脂パレット', (0.012, 0.012, 0.013), 0.6, spec=0.3)
     v = tex_coord(nt)
-    nt.links.new(ramp(nt, noise(nt, v, 6, 4), [(0.3, (0.012, 0.012, 0.014)), (0.7, (0.03, 0.03, 0.032))]), b.inputs['Base Color'])
-    nt.links.new(map_range(nt, noise(nt, v, 3, 4), 0.35, 0.65, 0.4, 0.65), b.inputs['Roughness'])
-    bump(nt, b, noise(nt, v, 150, 2), 0.05)
+    nt.links.new(ramp(nt, noise(nt, v, 6, 4), [(0.3, (0.008, 0.008, 0.009)), (0.7, (0.018, 0.018, 0.02))]), b.inputs['Base Color'])
+    nt.links.new(map_range(nt, noise(nt, v, 3, 4), 0.35, 0.65, 0.5, 0.72), b.inputs['Roughness'])
+    vor = nt.nodes.new('ShaderNodeTexVoronoi')
+    vor.inputs['Scale'].default_value = 120.0
+    nt.links.new(v, vor.inputs['Vector'])
+    bump(nt, b, map_range(nt, vor.outputs['Distance'], 0.0, 0.3, 1.0, 0.0), 0.25, 0.002)
     M['pallet'] = mat
 
     # 培養ビン用コンテナ (紺)
@@ -576,26 +579,33 @@ def asset_crate(root):
 
 
 def asset_pallet(root):
-    """1500 角の樹脂パレット"""
+    """1500 角の樹脂 (プラスチック) パレット: 一体成形の平デッキ + 9 脚 + 下桁 3 本"""
     c = make_asset_collection('_A_樹脂パレット', root)
     mb = MB()
     S = 1.5
-    # 上面デッキ (桟)
-    n = 9
-    w = S / n * 0.78
-    for i in range(n):
-        x = -S / 2 + S / n * (i + 0.5)
-        mb.box((x, 0, PALLET_H - 0.0125), (w, S, 0.025), M['pallet'])
-    for y in (-S / 2 + 0.05, 0, S / 2 - 0.05):
-        mb.box((0, y, PALLET_H - 0.035), (S, 0.1, 0.02), M['pallet'])
-    # 桁 (ブロック)
-    for x in (-S / 2 + 0.1, 0, S / 2 - 0.1):
-        for y in (-S / 2 + 0.1, 0, S / 2 - 0.1):
-            mb.box((x, y, 0.07), (0.2, 0.2, 0.1), M['pallet'])
-    # 下面ランナー
-    for x in (-S / 2 + 0.1, 0, S / 2 - 0.1):
-        mb.box((x, 0, 0.01), (0.2, S, 0.02), M['pallet'])
-    mb.build('樹脂パレット', c, bevel=0.006)
+    m = M['pallet']
+    top = PALLET_H
+    # 天面デッキ (一枚もの)
+    mb.box((0, 0, top - 0.02), (S, S, 0.034), m)
+    # 縁のリム
+    rim = 0.045
+    for sx, sy, w, d in ((0, 1, S, rim), (0, -1, S, rim), (1, 0, rim, S - 2 * rim), (-1, 0, rim, S - 2 * rim)):
+        mb.box((sx * (S / 2 - rim / 2), sy * (S / 2 - rim / 2), top - 0.001), (w, d, 0.006), m)
+    # 成形の格子リブ
+    pitch = 0.118
+    n = int((S - 2 * rim) / pitch)
+    for k in range(1, n):
+        u = -S / 2 + rim + k * (S - 2 * rim) / n
+        mb.box((u, 0, top - 0.002), (0.012, S - 2 * rim, 0.004), m)
+        mb.box((0, u, top - 0.002), (S - 2 * rim, 0.012, 0.004), m)
+    # 脚ブロック 9 か所 (フォーク差し込み口は 4 方向)
+    for x in (-S / 2 + 0.12, 0, S / 2 - 0.12):
+        for y in (-S / 2 + 0.12, 0, S / 2 - 0.12):
+            mb.box((x, y, 0.074), (0.24, 0.24, 0.09), m)
+    # 下桁 3 本
+    for x in (-S / 2 + 0.12, 0, S / 2 - 0.12):
+        mb.box((x, 0, 0.0145), (0.24, S, 0.029), m)
+    mb.build('樹脂パレット', c, bevel=0.008)
     return c
 
 
