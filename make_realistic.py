@@ -360,6 +360,15 @@ def build_materials():
     M['grip_belt'] = mat
     M['motor_gray'] = new_material('R_モーター塗装', (0.35, 0.38, 0.4), 0.4)[0]
     M['tape_roll'] = new_material('R_テープロール', (0.88, 0.85, 0.75), 0.25, sss=0.3)[0]
+    # 菌床ラックまわり
+    M['tray_black'] = new_material('R_菌床トレー', (0.04, 0.043, 0.048), 0.4, spec=0.5)[0]
+    mat, nt, b = new_material('R_亜鉛メッキ角パイプ', (0.66, 0.68, 0.68), 0.4, 1.0)
+    v = tex_coord(nt)
+    sp = noise(nt, v, 25, 3, 0.5)
+    nt.links.new(ramp(nt, sp, [(0.35, (0.58, 0.6, 0.6)), (0.65, (0.72, 0.74, 0.74))]), b.inputs['Base Color'])
+    nt.links.new(map_range(nt, sp, 0.3, 0.7, 0.3, 0.55), b.inputs['Roughness'])
+    M['galv_tube'] = mat
+    M['red_tape'] = new_material('R_赤テープ', (0.75, 0.03, 0.04), 0.5)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
@@ -1112,38 +1121,94 @@ def build_taper(ob, coll, A):
     mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0), rz=rot)
 
 
-def build_shelf(ob, coll, A):
-    """中量ラック (3 段) + 保管物"""
-    mn, mx = bounds(ob)
-    W, D, H = mx.x - mn.x, mx.y - mn.y, mx.z
-    cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+RACK_W = 1.46       # ラック 1 台の幅 (元の箱 3m に 2 台)
+RACK_H = 2.1
+RACK_LEVELS = 20
+
+
+def asset_tray(root, w, d):
+    """菌床用の黒い樹脂トレー (のこぎり状の山が並ぶ)"""
+    c = make_asset_collection('_A_菌床トレー', root)
     mb = MB()
-    p = 0.05
-    for x in (-W / 2 + p / 2, 0, W / 2 - p / 2):
-        for y in (-D / 2 + p / 2, D / 2 - p / 2):
-            mb.box((x, y, H / 2), (p, p, H), M['rack_blue'])
-    levels = (0.1, 0.5, H - 0.02)
-    for z in levels:
-        for y in (-D / 2 + p / 2, D / 2 - p / 2):
-            mb.box((0, y, z), (W, 0.04, 0.06), M['rack_orange'])
-        mb.box((0, 0, z + 0.035), (W - 0.02, D - 0.02, 0.01), M['galv'])
-    mb.build('R_' + ob.name, coll, bevel=0.004, loc=(cx, cy, 0))
-    # 保管物
-    for z in levels[:2]:
-        x = -W / 2 + 0.1
-        while x < W / 2 - 0.4:
-            kind = random.choice(('box_a', 'box_b', 'seed'))
-            if kind == 'seed' and z > 0.3:
-                kind = 'box_a'
-            sz = {'box_a': 0.45, 'box_b': 0.35, 'seed': 0.5}[kind]
-            instance(A[kind], '保管物', coll, (cx + x + sz / 2, cy + random.uniform(-0.05, 0.05), z + 0.04),
-                     math.radians(random.uniform(-4, 4)))
-            x += sz + random.uniform(0.05, 0.2)
-    top_z = levels[2] + 0.04
-    x = -W / 2 + 0.2
-    while x < W / 2 - 0.4:
-        instance(A['box_b'], '保管物', coll, (cx + x + 0.2, cy, top_z), math.radians(random.uniform(-6, 6)))
-        x += 0.5 + random.uniform(0.1, 0.4)
+    m = M['tray_black']
+    mb.box((0, 0, 0.004), (w, d, 0.008), m)
+    for s in (-1, 1):                              # 前後の縁
+        mb.box((0, s * (d / 2 - 0.008), 0.012), (w, 0.016, 0.024), m)
+    n = int(w / 0.095)
+    for k in range(n):
+        x = -w / 2 + (k + 0.5) * w / n
+        # 三角の山 (Y 方向に通る)
+        mt = (Matrix.Translation((x, 0, 0.008)) @ Matrix.Rotation(math.pi / 4, 4, 'Y')
+              @ Matrix.Diagonal((0.04, d - 0.03, 0.04, 1)))
+        r = bmesh.ops.create_cube(mb.bm, size=1.0, matrix=mt)
+        mb._assign(r['verts'], m)
+        # 抜き穴 (暗い凹み)
+        xh = x + w / n / 2
+        if k < n - 1:
+            for yy in (-d / 4, d / 4):
+                mb.box((xh, yy, 0.0085), (0.035, d / 2 - 0.08, 0.001), M['black_plastic'])
+    mb.build('菌床トレー', c, bevel=0.002)
+    return c
+
+
+def build_shelf(ob, coll, A):
+    """作業室の棚 → 菌床トレー用の移動ラック (亜鉛メッキ角パイプ + 黒トレー 20 段 + 縦ワイヤー)"""
+    mn, mx = bounds(ob)
+    W, D = mx.x - mn.x, mx.y - mn.y
+    cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+    n_rack = max(1, int(round(W / 1.5)))
+    rw = min(RACK_W, W / n_rack - 0.04)
+    dd = min(D, 0.95)
+    t = 0.05
+    tray_w = rw - 2 * t - 0.02
+    tray_d = dd / 2 - t / 2 - 0.02
+    if 'tray' not in A:
+        A['tray'] = asset_tray(bpy.data.collections['_アセット'], tray_w, tray_d)
+    g = M['galv_tube']
+    for i in range(n_rack):
+        rx = cx - W / 2 + (i + 0.5) * W / n_rack
+        mb = MB()
+        z0, z1 = 0.13, RACK_H
+        ys = (-dd / 2 + t / 2, 0.0, dd / 2 - t / 2)
+        xs = (-rw / 2 + t / 2, rw / 2 - t / 2)
+        for x in xs:
+            for y in ys:
+                mb.box((x, y, (z0 + z1) / 2), (t, t, z1 - z0), g)
+            for z in (z0 + 0.03, 1.12, z1 - t / 2):     # 側面の横桟
+                mb.box((x, 0, z), (t, dd, t), g)
+        for y in (ys[0], ys[2]):                          # 前後の上下枠
+            for z in (z0 + 0.03, z1 - t / 2):
+                mb.box((0, y, z), (rw, t, t), g)
+        # 台車ベース + キャスター
+        mb.box((0, 0, z0 - 0.01), (rw, dd, 0.02), g)
+        for x in (-rw / 2 + 0.1, rw / 2 - 0.1):
+            for y in (-dd / 2 + 0.08, dd / 2 - 0.08):
+                mb.box((x, y, 0.1), (0.08, 0.07, 0.008), g)
+                mb.box((x, y, 0.075), (0.04, 0.04, 0.045), g)
+                mb.cyl((x - 0.018, y, 0.045), (x + 0.018, y, 0.045), 0.045, M['rubber'], 16)
+        # 各段のトレー受け (L アングル)
+        levels = [0.2 + k * (z1 - 0.3) / RACK_LEVELS for k in range(RACK_LEVELS)]
+        for z in levels:
+            for x in (xs[0] + t / 2 + 0.006, xs[1] - t / 2 - 0.006):
+                mb.box((x, 0, z - 0.004), (0.012, dd - 0.06, 0.008), M['galv'])
+        # 前後面の縦ワイヤー
+        nw = int(rw / 0.1)
+        for k in range(1, nw):
+            x = -rw / 2 + k * rw / nw
+            for y in (ys[0] - t / 2 - 0.004, ys[2] + t / 2 + 0.004):
+                mb.cyl((x, y, z0 + 0.05), (x, y, z1 - 0.05), 0.0025, M['steel'], 6)
+        for y in (ys[0] - t / 2 - 0.004, ys[2] + t / 2 + 0.004):
+            mb.cyl((-rw / 2, y, z1 - 0.06), (rw / 2, y, z1 - 0.06), 0.003, M['steel'], 6)
+        # 目印テープ (赤・緑)
+        for x in xs:
+            for y in (ys[0], ys[2]):
+                mb.box((x, y, 1.12), (t + 0.004, t + 0.004, 0.05), M['red_tape'])
+        mb.box((xs[1], ys[0], 1.5), (t + 0.004, t + 0.004, 0.08), M['green_tape'])
+        mb.build(f'R_{ob.name}_ラック{i + 1}', coll, bevel=0.004, loc=(rx, cy, 0))
+        # トレー (前後 2 列 x 20 段)
+        for z in levels:
+            for yy in (-(tray_d / 2 + t / 2 + 0.01), tray_d / 2 + t / 2 + 0.01):
+                instance(A['tray'], '菌床トレー', coll, (rx, cy + yy, z), 0.0)
 
 
 def build_hanger(ob, coll, A):
