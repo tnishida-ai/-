@@ -1583,19 +1583,7 @@ def main():
                 partition_src.append(ob)
                 continue
             if n in ('Wall.013', 'Wall.014'):
-                window_bounds.append(bounds(ob))
-                # 窓帯 → ガラス + サッシ
-                mn, mx = bounds(ob)
-                mb = MB()
-                cy_ = (mn.y + mx.y) / 2
-                mb.box_mm((mn.x, cy_ - 0.006, mn.z), (mx.x, cy_ + 0.006, mx.z), M['glass'])
-                mb.box_mm((mn.x, mn.y, mn.z), (mx.x, mx.y, mn.z + 0.02), M['alu'])
-                mb.box_mm((mn.x, mn.y, mx.z - 0.02), (mx.x, mx.y, mx.z), M['alu'])
-                k = max(1, round((mx.x - mn.x) / 1.0))
-                for i in range(k + 1):
-                    x = mn.x + (mx.x - mn.x) * i / k
-                    mb.box_mm((max(mn.x, x - 0.015), mn.y, mn.z), (min(mx.x, x + 0.015), mx.y, mx.z), M['alu'])
-                mb.build('R_窓_' + n, real)
+                # 元の窓帯: ガラス窓は付けず、仕切り壁で塞ぐ
                 move(ob, old)
                 continue
             mn_, mx_ = bounds(ob)
