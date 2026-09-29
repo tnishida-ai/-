@@ -1427,9 +1427,10 @@ def build_taper(ob, coll, A):
     mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0), rz=rot)
 
 
-RACK_W = 1.46       # ラック 1 台の幅 (元の箱 3m に 2 台)
-RACK_H = 2.1
-RACK_LEVELS = 20
+RACK_W = 2.0        # ラックの幅 (元の箱 3m の中央に 1 台)
+RACK_H = 1.8
+RACK_D = 0.8
+RACK_LEVELS = 17
 
 
 def asset_tray(root, w, d):
@@ -1462,9 +1463,9 @@ def build_shelf(ob, coll, A):
     mn, mx = bounds(ob)
     W, D = mx.x - mn.x, mx.y - mn.y
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
-    n_rack = max(1, int(round(W / 1.5)))
-    rw = min(RACK_W, W / n_rack - 0.04)
-    dd = min(D, 0.95)
+    n_rack = 1
+    rw = min(RACK_W, W - 0.04)
+    dd = min(D, RACK_D)
     t = 0.05
     tray_w = rw - 2 * t - 0.02
     tray_d = dd / 2 - t / 2 - 0.02
