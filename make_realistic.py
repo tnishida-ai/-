@@ -329,6 +329,19 @@ def build_materials():
     M['yellow'] = new_material('R_非常停止箱', (0.95, 0.65, 0.05), 0.4)[0]
     M['counter'] = new_material('R_カウンター', (0.02, 0.02, 0.02), 0.2, emission=((0.9, 0.95, 1.0), 4.0))[0]
     M['bag'] = new_material('R_菌床袋', (0.75, 0.62, 0.42), 0.15, transmission=0.3, sss=0.3)[0]
+    # ベルトコンベヤまわり
+    mat, nt, b = new_material('R_PVCベルト_緑', (0.02, 0.3, 0.17), 0.3, coat=0.2)
+    v = tex_coord(nt)
+    wear = noise(nt, v, 6, 5, 0.6)
+    nt.links.new(ramp(nt, wear, [(0.4, (0.008, 0.16, 0.09)), (0.65, (0.014, 0.2, 0.115)), (0.9, (0.07, 0.24, 0.17))]), b.inputs['Base Color'])
+    scr = noise(nt, v, 12, 4, 0.55)
+    nt.links.new(map_range(nt, scr, 0.4, 0.7, 0.18, 0.42), b.inputs['Roughness'])
+    bump(nt, b, noise(nt, v, 400, 2), 0.05)
+    M['pvc_belt'] = mat
+    M['brass'] = new_material('R_真鍮', (0.75, 0.55, 0.3), 0.35, 1.0)[0]
+    M['orange_box'] = new_material('R_電源ボックス', (0.9, 0.3, 0.03), 0.4)[0]
+    M['spray_red'] = new_material('R_スプレー缶', (0.75, 0.06, 0.05), 0.3, 0.4)[0]
+    M['tape_measure'] = new_material('R_メジャー', (0.9, 0.75, 0.1), 0.35)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
@@ -382,6 +395,25 @@ class MB:
         res = bmesh.ops.create_uvsphere(self.bm, u_segments=segs, v_segments=rings,
                                         radius=1.0, matrix=m)
         self._assign(res['verts'], mat, True)
+
+    def torus(self, c, R, r, mat, segs=32, rsegs=6, tilt=0.0):
+        """水平なリング (巻いたコード等)"""
+        m = Matrix.Translation(c) @ Matrix.Rotation(tilt, 4, 'X')
+        vs = []
+        for i in range(segs):
+            a = 2 * math.pi * i / segs
+            for j in range(rsegs):
+                b = 2 * math.pi * j / rsegs
+                p = Vector(((R + r * math.cos(b)) * math.cos(a), (R + r * math.cos(b)) * math.sin(a), r * math.sin(b)))
+                vs.append(self.bm.verts.new(m @ p))
+        idx = self._mi(mat)
+        for i in range(segs):
+            for j in range(rsegs):
+                q = (vs[i * rsegs + j], vs[((i + 1) % segs) * rsegs + j],
+                     vs[((i + 1) % segs) * rsegs + (j + 1) % rsegs], vs[i * rsegs + (j + 1) % rsegs])
+                f = self.bm.faces.new(q)
+                f.material_index = idx
+                f.smooth = True
 
     def build(self, name, coll, bevel=0.0, loc=(0, 0, 0), rz=0.0):
         me = bpy.data.meshes.new(name)
@@ -898,31 +930,90 @@ def build_inoculator(ob, coll, A):
 
 
 def build_conveyor(ob, coll, A):
-    """ローラーコンベヤ"""
+    """ベルトコンベヤ (写真ベース): 緑の PVC 平ベルト + ステンレスフレーム + 駆動ボックス
+
+    元の箱の床面範囲に収め、ベルト面の高さは接種機の搬送面とそろえて 0.75m。
+    駆動ボックスは +Y 側の端。
+    """
     mn, mx = bounds(ob)
-    W, D, H = mx.x - mn.x, mx.y - mn.y, mx.z
+    W, D = mx.x - mn.x, mx.y - mn.y
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+    st = M['steel']
     mb = MB()
-    rw = 0.46  # 搬送幅
-    for sx in (-1, 1):
-        x = sx * (rw / 2 + 0.02)
-        mb.box((x, 0, H - 0.04), (0.035, D, 0.08), M['steel'])
-    n = int(D / 0.075)
-    for k in range(n):
-        y = -D / 2 + 0.04 + k * (D - 0.08) / (n - 1)
-        mb.cyl((-rw / 2, y, H - 0.03), (rw / 2, y, H - 0.03), 0.024, M['galv'], 14)
-    for y in (-D / 2 + 0.1, 0, D / 2 - 0.1):
-        for sx in (-1, 1):
-            x = sx * (rw / 2 + 0.02)
-            mb.box((x, y, (H - 0.08) / 2), (0.04, 0.04, H - 0.08), M['steel'])
-            mb.cyl((x, y, 0), (x, y, 0.015), 0.03, M['rubber'], 10)
-        mb.box((0, y, 0.18), (rw + 0.04, 0.03, 0.03), M['steel'])
-    # 制御ボックス
-    mb.box((rw / 2 + 0.12, -D / 2 + 0.6, H - 0.2), (0.14, 0.24, 0.26), M['gray_paint'])
-    mb.box((rw / 2 + 0.191, -D / 2 + 0.6, H - 0.16), (0.004, 0.03, 0.03), M['lamp_g'])
-    mb.build('R_' + ob.name, coll, bevel=0.003, loc=(cx, cy, 0))
-    for y in (-0.2, 0.35, 1.2):
-        instance(A['crate'], 'コンテナ', coll, (cx, cy + y, H - 0.005), math.radians(random.uniform(-3, 3)))
+    bw = 0.62                   # ベルト幅
+    L = D - 0.08                # フレーム長さ
+    ya, yb = -L / 2, L / 2
+    bz = 0.75                   # ベルト上面
+    fx = bw / 2 + 0.025         # サイドフレーム中心
+    # ベルト (上面・リターン・両端の巻き付き)
+    mb.box((0, 0, bz - 0.002), (bw, L - 0.08, 0.004), M['pvc_belt'])
+    mb.box((0, 0, bz - 0.084), (bw, L - 0.08, 0.004), M['pvc_belt'])
+    for y in (ya + 0.04, yb - 0.04):
+        mb.cyl((-bw / 2, y, bz - 0.043), (bw / 2, y, bz - 0.043), 0.043, M['pvc_belt'], 24)
+        mb.cyl((-fx, y, bz - 0.043), (fx, y, bz - 0.043), 0.012, st, 10)
+    # 受け板
+    mb.box((0, 0, bz - 0.01), (bw - 0.02, L - 0.2, 0.008), M['galv'])
+    # サイドフレーム (角パイプ、ベルト面より少し高い縁)
+    for s in (-1, 1):
+        mb.box((s * fx, 0, bz - 0.03), (0.045, L, 0.075), st)
+        mb.box((s * (fx - 0.018), 0, bz + 0.012), (0.01, L, 0.012), st)
+    # 脚 (角パイプ + 上部のテーパー金具 + アジャスタ)
+    legs_y = (ya + 0.28, 0.0, yb - 0.45)
+    for y in legs_y:
+        for s in (-1, 1):
+            x = s * fx
+            mb.box((x, y, 0.37), (0.05, 0.05, 0.52), st)
+            m = (Matrix.Translation((x, y, bz - 0.11)) @ Matrix.Rotation(math.pi / 4, 4, 'Z'))
+            r = bmesh.ops.create_cone(mb.bm, cap_ends=True, segments=4, radius1=0.036, radius2=0.1,
+                                      depth=0.08, matrix=m)
+            mb._assign(r['verts'], st)
+            mb.cyl((x, y, 0.02), (x, y, 0.11), 0.009, M['brass'], 8)       # ねじ棒
+            mb.cyl((x, y, 0.07), (x, y, 0.09), 0.016, M['brass'], 6)       # ナット
+            mb.cyl((x, y, 0.0), (x, y, 0.02), 0.04, M['rubber'], 16)      # ゴム足
+        mb.box((0, y, 0.2), (2 * fx, 0.04, 0.04), st)                     # 横つなぎ
+    for s in (-1, 1):                                                     # 縦つなぎ
+        mb.box((s * fx, (legs_y[0] + legs_y[-1]) / 2, 0.2), (0.04, legs_y[-1] - legs_y[0], 0.04), st)
+    # 駆動ボックス (+Y 端、ベルトの下に吊り下げ)
+    mb.box((0.12, yb - 0.05, bz - 0.22), (0.3, 0.2, 0.34), st)
+    mb.box((0.12, yb - 0.05, bz - 0.2), (0.3, 0.21, 0.004), st)
+    mb.cyl((0.12 + 0.151, yb - 0.08, bz - 0.12), (0.12 + 0.16, yb - 0.08, bz - 0.12), 0.012, st, 8)
+    mb.box((-0.2, yb - 0.05, bz - 0.2), (0.14, 0.14, 0.26), M['white_panel'])   # モーター
+    # 切替スイッチ
+    mb.cyl((fx + 0.023, yb - 0.25, bz - 0.02), (fx + 0.045, yb - 0.25, bz - 0.02), 0.014, st, 12)
+    mb.box((fx + 0.052, yb - 0.25, bz - 0.02), (0.014, 0.008, 0.028), M['black_plastic'])
+    # ベルトを横切る治具 (ボルト付きフラットバー + 接種針 4 本)
+    jy = ya + 0.75
+    for s in (-1, 1):
+        mb.box((s * (fx + 0.005), jy, bz + 0.04), (0.02, 0.05, 0.1), M['alu'])
+    mb.box((0, jy, bz + 0.07), (2 * fx + 0.06, 0.03, 0.06), M['alu'])
+    for k in range(4):
+        x = -0.22 + k * 0.147
+        mb.cyl((x, jy - 0.016, bz + 0.07), (x, jy - 0.028, bz + 0.07), 0.013, st, 6)
+        mb.cyl((x, jy - 0.02, bz + 0.03), (x, jy - 0.3, bz + 0.013), 0.012, st, 16)
+        mb.cyl((x, jy - 0.3, bz + 0.013), (x, jy - 0.34, bz + 0.012), 0.012, st, 16, r2=0.001)
+    # ベルト上の工具
+    mb.cyl((-0.22, ya + 0.12, bz), (-0.22, ya + 0.12, bz + 0.15), 0.033, M['spray_red'], 20)
+    mb.cyl((-0.22, ya + 0.12, bz + 0.15), (-0.22, ya + 0.12, bz + 0.19), 0.033, M['black_plastic'], 20)
+    mb.box((0.02, jy - 0.02, bz + 0.004), (0.02, 0.16, 0.006), st)         # スパナ
+    mb.cyl((0.02, jy - 0.1, bz + 0.004), (0.02, jy - 0.1, bz + 0.008), 0.022, st, 6)
+    mb.cyl((0.02, jy + 0.06, bz + 0.004), (0.02, jy + 0.06, bz + 0.008), 0.02, st, 6)
+    mb.cyl((-0.1, jy + 0.4, bz + 0.03), (0.02, jy + 0.4, bz + 0.03), 0.026, M['black_plastic'], 16)
+    mb.box((-0.04, jy + 0.4, bz + 0.03), (0.012, 0.06, 0.07), M['black_plastic'])
+    mb.box((0.15, yb - 0.9, bz + 0.02), (0.07, 0.035, 0.04), M['tape_measure'])   # メジャー
+    mb.box((0.15, yb - 0.9, bz + 0.042), (0.075, 0.03, 0.004), M['white_panel'])
+    # 床置きの電源ボックス (オレンジ) + 巻いたコード
+    ox, oy = -0.05, 0.25
+    mb.box((ox, oy, 0.12), (0.26, 0.4, 0.24), M['orange_box'])
+    for k in range(5):
+        mb.box((ox + 0.131, oy + 0.08, 0.06 + k * 0.025), (0.004, 0.14, 0.008), M['black_plastic'])
+    mb.box((ox - 0.131, oy - 0.1, 0.12), (0.004, 0.06, 0.08), M['black_plastic'])
+    for k, (r_, zz, dx, dy) in enumerate(((0.12, 0.245, 0.0, 0.02), (0.1, 0.255, 0.02, -0.03), (0.09, 0.265, -0.02, 0.0))):
+        mb.torus((ox + dx, oy + dy, zz), r_, 0.004, M['white_panel'], tilt=0.12 * (k - 1))
+    for k, pts in enumerate((((ox - 0.13, oy - 0.1, 0.02), (ox - 0.4, oy - 0.3, 0.008), (-0.6, -0.7, 0.008)),
+                             ((ox + 0.1, oy + 0.2, 0.02), (0.3, oy + 0.5, 0.008), (0.45, yb - 0.3, 0.008)))):
+        for p0, p1 in zip(pts[:-1], pts[1:]):
+            mb.cyl(p0, p1, 0.007, M['rubber'], 8)
+    mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0))
 
 
 def build_taper(ob, coll, A):
