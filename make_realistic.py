@@ -269,7 +269,7 @@ def build_materials():
     M['white_panel'] = new_material('R_白塗装', (0.9, 0.9, 0.88), 0.3)[0]
     M['rubber'] = new_material('R_ゴム', (0.02, 0.02, 0.02), 0.7)[0]
     M['black_plastic'] = new_material('R_黒樹脂', (0.015, 0.015, 0.018), 0.35)[0]
-    M['belt'] = new_material('R_ベルト', (0.05, 0.25, 0.12), 0.55)[0]
+    M['belt'] = new_material('R_ベルト', (0.03, 0.42, 0.14), 0.45)[0]
 
     # 発光系
     M['screen'] = new_material('R_タッチパネル', (0.02, 0.02, 0.03), 0.1, emission=((0.35, 0.6, 1.0), 2.5))[0]
@@ -315,6 +315,20 @@ def build_materials():
     nt.links.new(mix.outputs[2], b.inputs['Base Color'])
     bump(nt, b, n2, 0.6, 0.01)
     M['grass'] = mat
+    # 接種機まわり
+    M['acrylic_blue'] = new_material('R_青アクリル', (0.35, 0.68, 0.98), 0.01, transmission=1.0, ior=1.49)[0]
+    M['sign_gray'] = new_material('R_看板_グレー', (0.72, 0.73, 0.74), 0.4, 0.3)[0]
+    M['sign_light'] = new_material('R_看板_面', (0.78, 0.79, 0.8), 0.45)[0]
+    M['sign_blue'] = new_material('R_看板_青', (0.05, 0.08, 0.32), 0.4)[0]
+    M['sign_text'] = new_material('R_看板_文字', (0.04, 0.06, 0.25), 0.4)[0]
+    M['warn'] = new_material('R_注意ラベル', (0.75, 0.25, 0.1), 0.5)[0]
+    M['qr'] = new_material('R_QR', (0.15, 0.15, 0.15), 0.6)[0]
+    M['paper'] = new_material('R_紙', (0.9, 0.9, 0.88), 0.8)[0]
+    M['green_tape'] = new_material('R_養生テープ', (0.1, 0.65, 0.15), 0.6)[0]
+    M['btn_green'] = new_material('R_押しボタン', (0.05, 0.45, 0.15), 0.3)[0]
+    M['yellow'] = new_material('R_非常停止箱', (0.95, 0.65, 0.05), 0.4)[0]
+    M['counter'] = new_material('R_カウンター', (0.02, 0.02, 0.02), 0.2, emission=((0.9, 0.95, 1.0), 4.0))[0]
+    M['bag'] = new_material('R_菌床袋', (0.75, 0.62, 0.42), 0.15, transmission=0.3, sss=0.3)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
@@ -636,77 +650,251 @@ def build_table(ob, coll, A):
     return (cx, cy, H, W, D)
 
 
+CJK_FONTS = ('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+             '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+             'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/simhei.ttf',
+             '/System/Library/Fonts/PingFang.ttc')
+
+
+def text_mesh(body, size, mat, parent, loc, rot, align='LEFT', coll=None):
+    """文字をメッシュ化して配置 (フォントファイルを .blend に同梱しなくて済む)"""
+    import os
+    path = next((p for p in CJK_FONTS if os.path.exists(p)), None)
+    if path is None:
+        return None
+    font = bpy.data.fonts.load(path, check_existing=True)
+    cu = bpy.data.curves.new('txt', 'FONT')
+    cu.body = body
+    cu.font = font
+    cu.size = size
+    cu.align_x = align
+    cu.align_y = 'CENTER'
+    tmp = bpy.data.objects.new('txt', cu)
+    bpy.context.scene.collection.objects.link(tmp)
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(tmp.evaluated_get(dg))
+    bpy.data.objects.remove(tmp)
+    bpy.data.curves.remove(cu)
+    me.materials.clear()
+    me.materials.append(mat)
+    ob = bpy.data.objects.new('R_看板文字', me)
+    (coll or parent.users_collection[0]).objects.link(ob)
+    ob.parent = parent
+    ob.location = loc
+    ob.rotation_euler = rot
+    return ob
+
+
 def build_inoculator(ob, coll, A):
-    """接種機: ステンレス架台 + アクリルカバー + 接種ヘッド + 操作盤"""
+    """接種機 (植菌機): 写真を元にしたステンレスフレーム + 青アクリル囲い + 供給コンベヤ
+
+    元の箱の床面範囲 (幅 x 奥行き) に収め、高さは作業者と釣り合う実寸にする。
+    供給コンベヤは -Y 側に伸び、操作盤も -Y 側を向く。
+    """
     mn, mx = bounds(ob)
-    W, D, H = mx.x - mn.x, mx.y - mn.y, mx.z
+    W, D = mx.x - mn.x, mx.y - mn.y
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+    y0, y1 = -D / 2, D / 2
     mb = MB()
-    base_h = 0.52
-    # 下部キャビネット
-    mb.box((0, 0, 0.06 + (base_h - 0.06) / 2), (W - 0.04, D - 0.04, base_h - 0.06), M['steel'])
-    # パネル目地と扉の取っ手
-    for k in range(3):
-        y = -D / 2 + 0.02 + (D - 0.04) * (k + 0.5) / 3
-        for sx in (-1, 1):
-            mb.box((sx * (W / 2 - 0.018), y, 0.3), (0.006, (D - 0.04) / 3 - 0.02, base_h - 0.16), M['steel'])
-            mb.box((sx * (W / 2 - 0.012), y + 0.25, 0.36), (0.012, 0.02, 0.12), M['black_plastic'])
-    # アジャスタ脚
-    for x in (-W / 2 + 0.08, W / 2 - 0.08):
-        for y in (-D / 2 + 0.08, 0, D / 2 - 0.08):
-            mb.cyl((x, y, 0), (x, y, 0.012), 0.035, M['rubber'], 12)
-            mb.cyl((x, y, 0.012), (x, y, 0.06), 0.012, M['steel'], 8)
-    # 天板
-    mb.box((0, 0, base_h + 0.01), (W, D, 0.02), M['steel'])
-    # アルミフレーム + アクリルカバー
-    top = H
-    fz = base_h + 0.02
-    f = 0.03
-    for x in (-W / 2 + f / 2, W / 2 - f / 2):
-        for y in (-D / 2 + f / 2, D / 2 - f / 2):
-            mb.box((x, y, (fz + top) / 2), (f, f, top - fz), M['alu'])
-    for y in (-D / 2 + f / 2, D / 2 - f / 2):
-        mb.box((0, y, top - f / 2), (W, f, f), M['alu'])
-    for x in (-W / 2 + f / 2, W / 2 - f / 2):
-        mb.box((x, 0, top - f / 2), (f, D, f), M['alu'])
-    for x in (-W / 2 + f / 2, W / 2 - f / 2):
-        mb.box((x, 0, (fz + top) / 2), (0.006, D - f, top - fz - f), M['acrylic'])
-    for y in (-D / 2 + f / 2, D / 2 - f / 2):
-        mb.box((0, y, (fz + top) / 2), (W - f, 0.006, top - fz - f), M['acrylic'])
-    mb.box((0, 0, top - 0.003), (W - f, D - f, 0.006), M['acrylic'])
-    # 内部コンベヤ
-    mb.box((0, 0, fz + 0.06), (0.42, D - 0.1, 0.03), M['belt'])
-    for x in (-0.23, 0.23):
-        mb.box((x, 0, fz + 0.06), (0.03, D - 0.1, 0.07), M['steel'])
-    # 接種ヘッド (門型)
-    for x in (-0.45, 0.45):
-        mb.box((x, 0.1, (fz + top - 0.05) / 2), (0.08, 0.18, top - 0.05 - fz), M['teal'])
-    mb.box((0, 0.1, top - 0.1), (0.98, 0.2, 0.1), M['teal'])
-    for k in range(4):
-        x = (k - 1.5) * 0.085
-        mb.cyl((x, 0.1, top - 0.15), (x, 0.1, top - 0.25), 0.018, M['steel'], 12)
-        mb.cyl((x, 0.1, top - 0.25), (x, 0.1, top - 0.29), 0.008, M['steel'], 8, r2=0.004)
-    # 種菌ホッパー
-    mb.cyl((0.35, -0.7, top - 0.05), (0.35, -0.7, fz + 0.18), 0.17, M['steel'], 24, r2=0.05)
-    # 操作盤 (タッチパネル)
-    px, py = W / 2 + 0.02, -D / 2 + 0.25
-    mb.cyl((px, py, base_h), (px, py, base_h + 0.25), 0.02, M['steel'], 10)
-    mb.box((px + 0.02, py, base_h + 0.33), (0.06, 0.34, 0.24), M['gray_paint'])
-    mb.box((px + 0.051, py, base_h + 0.34), (0.002, 0.29, 0.17), M['screen'])
-    mb.box((px + 0.051, py - 0.12, base_h + 0.235), (0.006, 0.03, 0.03), M['lamp_r'])
-    # 積層表示灯
-    tx, ty = -W / 2 + 0.06, D / 2 - 0.06
-    z = top
-    mb.cyl((tx, ty, z), (tx, ty, z + 0.1), 0.01, M['steel'], 8)
-    z += 0.1
-    for m in (M['lamp_r'], M['lamp_y'], M['lamp_g']):
-        mb.cyl((tx, ty, z), (tx, ty, z + 0.045), 0.03, m, 16)
-        z += 0.047
-    mb.cyl((tx, ty, z), (tx, ty, z + 0.01), 0.03, M['black_plastic'], 16)
-    mb.build('R_' + ob.name, coll, bevel=0.003, loc=(cx, cy, 0))
-    # 機内のコンテナ
-    for k, y in enumerate((-0.8, -0.2, 0.55)):
-        instance(A['crate'], 'コンテナ', coll, (cx, cy + y, fz + 0.075), 0)
+    st, t = M['steel'], 0.04          # 角パイプ 40mm
+
+    def tube_z(x, y, za, zb):
+        mb.box((x, y, (za + zb) / 2), (t, t, zb - za), st)
+
+    def tube_x(xa, xb, y, z):
+        mb.box(((xa + xb) / 2, y, z), (xb - xa, t, t), st)
+
+    def tube_y(x, ya, yb, z):
+        mb.box((x, (ya + yb) / 2, z), (t, yb - ya, t), st)
+
+    # ---------------- 本体フレーム ----------------
+    bx0, bx1 = -0.6, 0.6               # 本体の幅
+    by0, by1 = -0.05, y1 - 0.04        # 本体の奥行き
+    ztop = 1.6
+    posts = [(x, y) for x in (bx0, bx1) for y in (by0, by1, (by0 + by1) / 2)]
+    for x, y in posts:
+        tube_z(x, y, 0.13, ztop)
+    for z in (0.14, 0.46, 0.8, ztop):
+        for y in (by0, by1):
+            tube_x(bx0, bx1, y, z)
+        for x in (bx0, bx1):
+            tube_y(x, by0, by1, z)
+    # 下部の縦格子
+    for x in (bx0, bx1):
+        k = 0
+        y = by0 + 0.35
+        while y < by1 - 0.05:
+            mb.box((x, y, 0.3), (0.012, 0.012, 0.32), st)
+            y += 0.07
+    # キャスター
+    for x in (bx0, bx1):
+        for y in (by0, by1):
+            mb.box((x, y, 0.118), (0.1, 0.08, 0.006), st)
+            mb.box((x, y, 0.085), (0.05, 0.035, 0.06), st)
+            mb.cyl((x - 0.02, y, 0.05), (x + 0.02, y, 0.05), 0.05, M['boot'], 18)
+    # 側面の閉じた箱 (下部ギア室、丸窓付き)
+    mb.box((bx0 + 0.03, (by0 + by1) / 2 - 0.25, 0.64), (0.012, 0.5, 0.3), st)
+    mb.cyl((bx0 + 0.02, (by0 + by1) / 2 - 0.25, 0.64), (bx0 + 0.04, (by0 + by1) / 2 - 0.25, 0.64), 0.09, M['black_plastic'], 24)
+    # 作業デッキ (コンベヤ部分は開口)
+    for xa, xb in ((bx0, -0.34), (0.34, bx1)):
+        mb.box(((xa + xb) / 2, (by0 + by1) / 2, 0.83), (xb - xa, by1 - by0, 0.008), st)
+
+    # ---------------- 搬送部 (V 字の桟 + 緑ベルト + チェーン) ----------------
+    cz = 0.74                           # 搬送面の高さ
+    fy0 = y0 + 0.03
+    for x in (-0.36, 0.36):             # サイドフレーム (チャンネル)
+        mb.box((x, (fy0 + by1) / 2, cz - 0.06), (0.035, by1 - fy0, 0.14), st)
+    for x in (-0.3, 0.3):               # ローラーチェーン
+        mb.box((x, (fy0 + by1) / 2, cz - 0.005), (0.018, by1 - fy0 - 0.04, 0.02), M['black_plastic'])
+    for x in (-0.13, 0.13):             # 緑のベルト
+        mb.box((x, (fy0 + by1) / 2, cz - 0.02), (0.07, by1 - fy0 - 0.04, 0.01), M['belt'])
+    flights = []
+    y = fy0 + 0.1
+    while y < by1 - 0.08:
+        # V 字トレー (2 枚の傾いた板)
+        for s_ in (-1, 1):
+            m = (Matrix.Translation((0, y + s_ * 0.03, cz + 0.035)) @ Matrix.Rotation(s_ * math.radians(-35), 4, 'X')
+                 @ Matrix.Diagonal((0.56, 0.075, 0.003, 1)))
+            r = bmesh.ops.create_cube(mb.bm, size=1.0, matrix=m)
+            mb._assign(r['verts'], st)
+        mb.box((0, y, cz + 0.004), (0.56, 0.012, 0.008), st)
+        flights.append(y)
+        y += 0.26
+    # ガイドレール (丸棒) と黒ノブ
+    for x in (-0.33, 0.33):
+        mb.cyl((x, fy0 + 0.05, cz + 0.13), (x, by0 - 0.02, cz + 0.13), 0.006, st, 8)
+        for yy in (fy0 + 0.2, (fy0 + by0) / 2, by0 - 0.1):
+            mb.cyl((x, yy, cz + 0.02), (x, yy, cz + 0.13), 0.006, st, 8)
+            mb.cyl((x + math.copysign(0.03, x), yy, cz + 0.06), (x + math.copysign(0.05, x), yy, cz + 0.06), 0.014, M['black_plastic'], 10)
+            mb.sphere((x + math.copysign(0.055, x), yy, cz + 0.06), (0.012, 0.018, 0.018), M['black_plastic'], 10, 6)
+    # 供給コンベヤの端のカバー箱と脚
+    mb.box((0, fy0 + 0.13, cz - 0.2), (0.8, 0.26, 0.36), st)
+    mb.box((0.41, (fy0 + by0) / 2 + 0.1, cz - 0.2), (0.012, by0 - fy0 - 0.3, 0.36), st)
+    mb.box((0.416, fy0 + 0.13, cz - 0.18), (0.004, 0.12, 0.05), M['black_plastic'])
+    for yy in (fy0 + 0.03, (fy0 + by0) / 2):
+        for x in (-0.36, 0.36):
+            tube_z(x, yy, 0.0, cz - 0.38)
+            mb.cyl((x, yy, 0), (x, yy, 0.012), 0.03, M['rubber'], 10)
+        tube_x(-0.36, 0.36, yy, 0.15)
+
+    # ---------------- 上部: ヘッダー看板 + 青アクリル囲い ----------------
+    hz0, hz1 = ztop + 0.02, ztop + 0.26
+    mb.box((0, (by0 + by1) / 2, (hz0 + hz1) / 2), (bx1 - bx0 + 0.04, by1 - by0 + 0.04, hz1 - hz0), M['sign_gray'])
+    mb.box((0, (by0 + by1) / 2, hz0 - 0.008), (bx1 - bx0 + 0.02, by1 - by0 + 0.02, 0.016), M['white_panel'])
+    fy = by0 - 0.021                                        # 看板の前面
+    mb.box((bx0 + 0.13, fy - 0.001, (hz0 + hz1) / 2), (0.22, 0.004, 0.2), M['sign_blue'])
+    for k in range(3):                                      # 注意ラベル
+        mb.box((bx0 + 0.29 + k * 0.05, fy - 0.001, hz0 + 0.04), (0.04, 0.003, 0.05), M['warn'])
+    mb.box((bx1 - 0.08, fy - 0.001, hz0 + 0.06), (0.07, 0.003, 0.07), M['qr'])
+    sx = bx1 + 0.021                                        # 看板の右側面
+    mb.box((sx + 0.001, by0 + 0.2, (hz0 + hz1) / 2), (0.004, 0.36, 0.22), M['sign_blue'])
+    mb.box((sx + 0.001, (by0 + by1) / 2 + 0.2, (hz0 + hz1) / 2), (0.003, by1 - by0 - 0.44, 0.22), M['sign_light'])
+    # 屋根の青アクリル
+    mb.box((0, (by0 + by1) / 2, hz1 + 0.006), (bx1 - bx0 + 0.06, by1 - by0 + 0.06, 0.008), M['acrylic_blue'])
+    # 囲い (側面・背面)。ヒンジとトグルラッチ付き
+    az0, az1 = 0.9, ztop
+    for x in (bx0 - 0.028, bx1 + 0.028):
+        mb.box((x, (by0 + by1) / 2 + 0.05, (az0 + az1) / 2), (0.006, by1 - by0 - 0.1, az1 - az0), M['acrylic_blue'])
+        for yy in (by0 + 0.25, (by0 + by1) / 2, by1 - 0.2):
+            mb.box((x + math.copysign(0.006, x), yy, az1 - 0.03), (0.01, 0.06, 0.035), st)
+    mb.box((0, by1 + 0.028, (az0 + az1) / 2), (bx1 - bx0, 0.006, az1 - az0), M['acrylic_blue'])
+    for x in (-0.3, 0.3):
+        mb.box((x, fy - 0.006, hz0 + 0.02), (0.02, 0.012, 0.05), st)
+        mb.box((x, fy - 0.01, hz0 + 0.05), (0.012, 0.01, 0.02), M['lamp_r'])
+    # 天井の LED バー
+    mb.box((bx1 - 0.08, (by0 + by1) / 2, ztop - 0.03), (0.02, by1 - by0 - 0.1, 0.008), M['led'])
+    # カウンター表示
+    mb.box((0.05, fy + 0.05, hz1 + 0.05), (0.26, 0.05, 0.075), M['black_plastic'])
+    mb.box((0.07, fy + 0.024, hz1 + 0.05), (0.18, 0.002, 0.04), M['counter'])
+
+    # ---------------- 前面の操作盤 ----------------
+    px0, px1 = bx0 + 0.02, bx0 + 0.9
+    py0, py1 = by0 - 0.3, by0
+    pz0, pz1 = 0.95, ztop
+    mb.box(((px0 + px1) / 2, (py0 + py1) / 2, (pz0 + pz1) / 2), (px1 - px0, py1 - py0, pz1 - pz0), st)
+    pf = py0 - 0.002
+    mid = px0 + 0.4
+    mb.box((mid, pf, (pz0 + pz1) / 2), (0.006, 0.003, pz1 - pz0 - 0.02), M['black_plastic'])   # 扉の合わせ目
+    for zz in (pz1 - 0.14, pz1 - 0.38):
+        mb.box((px0 + 0.2, pf - 0.001, zz + 0.045), (0.3, 0.003, 0.03), M['sign_blue'])
+        for k in range(4):
+            x = px0 + 0.08 + k * 0.08
+            mb.cyl((x, pf, zz), (x, pf - 0.02, zz), 0.022, st, 16)
+            mb.cyl((x, pf - 0.02, zz), (x, pf - 0.028, zz), 0.017,
+                   M['lamp_g'] if (zz > pz1 - 0.2 and k in (1, 2)) else M['btn_green'], 16)
+    # タッチパネル
+    hx = mid + 0.24
+    mb.box((hx, pf - 0.012, pz1 - 0.2), (0.3, 0.024, 0.22), M['black_plastic'])
+    mb.box((hx, pf - 0.025, pz1 - 0.2), (0.25, 0.002, 0.17), M['screen'])
+    # 緑テープで貼った紙
+    mb.box((hx, pf - 0.003, pz1 - 0.47), (0.3, 0.002, 0.26), M['paper'])
+    for dz in (-0.13, 0.13):
+        mb.box((hx, pf - 0.0045, pz1 - 0.47 + dz), (0.33, 0.002, 0.035), M['green_tape'])
+    for dx in (-0.15, 0.15):
+        mb.box((hx + dx, pf - 0.0045, pz1 - 0.47), (0.035, 0.002, 0.28), M['green_tape'])
+    # 非常停止
+    mb.box((bx1, by0 - 0.045, 1.35), (0.1, 0.05, 0.1), M['yellow'])
+    mb.cyl((bx1, by0 - 0.07, 1.35), (bx1, by0 - 0.09, 1.35), 0.018, M['black_plastic'], 12)
+    mb.cyl((bx1, by0 - 0.09, 1.35), (bx1, by0 - 0.11, 1.35), 0.032, M['lamp_r'], 20)
+    # 前面の右側は透明アクリル
+    mb.box(((px1 + bx1) / 2 + 0.02, by0 - 0.028, (az0 + az1) / 2), (bx1 - px1 - 0.06, 0.006, az1 - az0), M['acrylic_blue'])
+
+    # ---------------- 内部機構 ----------------
+    # 種菌ホッパー (四角錐台)
+    hx_, hy_ = -0.08, (by0 + by1) / 2 - 0.05
+    m = Matrix.Translation((hx_, hy_, 1.12)) @ Matrix.Rotation(math.pi / 4, 4, 'Z')
+    r = bmesh.ops.create_cone(mb.bm, cap_ends=True, segments=4, radius1=0.1, radius2=0.3, depth=0.26, matrix=m)
+    mb._assign(r['verts'], st)
+    mb.box((hx_, hy_, 0.94), (0.14, 0.14, 0.1), st)
+    for k in range(4):                                     # 上部のボルト列
+        mb.cyl((hx_ + 0.1, hy_ - 0.15 + k * 0.1, 1.25), (hx_ + 0.1, hy_ - 0.15 + k * 0.1, 1.3), 0.012, st, 6)
+    # 計量ボックス (ルーバー付き)
+    bxa, bxb, bya, byb = 0.12, bx1 - 0.04, hy_ - 0.1, by1 - 0.05
+    mb.box(((bxa + bxb) / 2, (bya + byb) / 2, 1.2), (bxb - bxa, byb - bya, 0.74), M['galv'])
+    for k in range(8):
+        mb.box((bxb - 0.1, bya - 0.004, 1.43 + k * 0.014), (0.12, 0.006, 0.006), st)
+    # オイラーボトル
+    mb.cyl((bxa - 0.06, bya + 0.2, 1.2), (bxa - 0.06, bya + 0.2, 1.34), 0.045, M['white_panel'], 20)
+    mb.cyl((bxa - 0.06, bya + 0.2, 1.3), (bxa - 0.06, bya + 0.2, 1.31), 0.046, M['lamp_r'], 20)
+    mb.cyl((bxa - 0.06, bya + 0.2, 1.2), (bxa - 0.06, bya + 0.2, 1.12), 0.01, M['white_panel'], 8)
+    mb.cyl((bxa - 0.06, bya + 0.2, 1.12), (bxa - 0.2, bya + 0.3, 0.9), 0.004, M['white_panel'], 6)
+    # モーター・スプロケット・チェーン
+    mx_, my_ = -0.4, (by0 + by1) / 2 + 0.25
+    mb.cyl((mx_, my_, 1.0), (mx_ + 0.22, my_, 1.0), 0.065, M['black_plastic'], 20)
+    mb.box((mx_ + 0.27, my_, 1.0), (0.1, 0.13, 0.13), M['alu'])
+    for (sy_, sz_, r_) in ((my_ - 0.12, 0.95, 0.055), (my_ + 0.12, 0.95, 0.045)):
+        mb.cyl((-0.2, sy_, sz_), (-0.19, sy_, sz_), r_, st, 20)
+        mb.cyl((-0.21, sy_, sz_), (-0.18, sy_, sz_), 0.012, st, 8)
+    mb.box((-0.195, my_, 0.95 + 0.05), (0.008, 0.24, 0.01), M['black_plastic'])
+    mb.box((-0.195, my_, 0.95 - 0.05), (0.008, 0.24, 0.01), M['black_plastic'])
+    mb.cyl((-0.19, my_ - 0.12, 0.95), (0.05, my_ - 0.12, 0.95), 0.012, st, 8)
+    # ガイドシャフト
+    for (gx, gy) in ((0.05, hy_ - 0.2), (0.05, hy_ + 0.25), (-0.3, hy_ - 0.2)):
+        mb.cyl((gx, gy, 0.83), (gx, gy, 1.28), 0.013, st, 10)
+        mb.cyl((gx, gy, 1.28), (gx, gy, 1.31), 0.022, st, 6)
+        mb.cyl((gx, gy, 0.86), (gx, gy, 0.92), 0.022, M['black_plastic'], 10)
+    mb.box((-0.12, hy_ - 0.2, 1.05), (0.4, 0.05, 0.012), st)
+
+    mach = mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0))
+
+    # 看板の文字 (前面・右側面)
+    text_mesh('金博洋', 0.055, M['white_panel'], mach, (bx0 + 0.13, fy - 0.004, (hz0 + hz1) / 2),
+              (math.pi / 2, 0, 0), 'CENTER', coll)
+    text_mesh('纯电动香菇固体接种机', 0.062, M['sign_text'], mach, (bx0 + 0.26, fy - 0.003, (hz0 + hz1) / 2 + 0.035),
+              (math.pi / 2, 0, 0), 'LEFT', coll)
+    text_mesh('金博洋', 0.1, M['white_panel'], mach, (sx + 0.004, by0 + 0.2, (hz0 + hz1) / 2),
+              (math.pi / 2, 0, math.pi / 2), 'CENTER', coll)
+    text_mesh('纯电动香菇固体接种机', 0.1, M['sign_text'], mach, (sx + 0.003, (by0 + by1) / 2 + 0.2, (hz0 + hz1) / 2),
+              (math.pi / 2, 0, math.pi / 2), 'CENTER', coll)
+
+    # 桟に載った菌床袋
+    for k, yy in enumerate(flights):
+        if yy < by0 - 0.1 and k % 3 != 2:
+            b = MB()
+            b.cyl((-0.24, 0, 0), (0.24, 0, 0), 0.052, M['bag'], 20)
+            b.sphere((-0.24, 0, 0), (0.01, 0.05, 0.05), M['bag'], 12, 8)
+            b.sphere((0.24, 0, 0), (0.01, 0.05, 0.05), M['bag'], 12, 8)
+            bo = b.build('菌床袋', coll, loc=(cx, cy + yy, cz + 0.06))
 
 
 def build_conveyor(ob, coll, A):
