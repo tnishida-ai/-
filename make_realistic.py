@@ -531,6 +531,22 @@ def build_corrugated(ob, coll):
     mb.build('R_レール_' + ob.name, coll, bevel=0.006)
 
 
+def wall_with_holes(name, coll, x0, x1, y0, y1, z0, z1, holes, mat):
+    """XZ 面の長方形から holes [(xa, xb, za, zb), ...] を抜いた壁を、箱の組み合わせで作る"""
+    xs = sorted({x0, x1} | {h[0] for h in holes} | {h[1] for h in holes})
+    xs = [x for x in xs if x0 <= x <= x1]
+    mb = MB()
+    for xa, xb in zip(xs[:-1], xs[1:]):
+        xm = (xa + xb) / 2
+        cut = sorted((h[2], h[3]) for h in holes if h[0] <= xm <= h[1])
+        z = z0
+        for za, zb in cut + [(z1, z1)]:
+            if za > z + 1e-4:
+                mb.box_mm((xa, y0, z), (xb, y1, min(za, z1)), mat)
+            z = max(z, zb)
+    return mb.build(name, coll)
+
+
 def instance(asset_coll, name, coll, loc, rz=0.0):
     e = bpy.data.objects.new(name, None)
     e.instance_type = 'COLLECTION'
@@ -1518,6 +1534,8 @@ def main():
     objs = list(bpy.data.objects)
     workers = []
     perimeter_walls = []
+    partition_src = []
+    window_bounds = []
     for ob in objs:
         n = ob.name
         base = n.split('.')[0]
@@ -1560,7 +1578,12 @@ def main():
             ob.data.materials.clear(); ob.data.materials.append(M['vinyl'])
             ob.location.z += 0.002
         elif base == 'Wall':
+            if n in ('Wall.007', 'Wall.012'):
+                # 作業室との仕切り: 後で 1 枚の穴あき壁として作り直す
+                partition_src.append(ob)
+                continue
             if n in ('Wall.013', 'Wall.014'):
+                window_bounds.append(bounds(ob))
                 # 窓帯 → ガラス + サッシ
                 mn, mx = bounds(ob)
                 mb = MB()
@@ -1605,6 +1628,34 @@ def main():
                 bv.width = 0.006
                 bv.segments = 2
                 bv.limit_method = 'ANGLE'
+
+    # 作業室との仕切り壁: 隙間の無い 1 枚壁 + ガラス窓 + コンベヤの通る長方形の開口
+    if partition_src:
+        bb = [bounds(o) for o in partition_src]
+        y0 = min(b[0].y for b in bb)
+        y1 = max(b[1].y for b in bb)
+        top = max(b[1].z for b in bb)
+        holes = [(b[0].x, b[1].x, b[0].z, b[1].z) for b in window_bounds]
+        conv = bpy.data.objects.get('R_コンベヤ')
+        if conv is not None:
+            cmn, cmx = bounds(bpy.data.objects['コンベヤ'])
+            ccx = (cmn.x + cmx.x) / 2
+            ox0, ox1, oz0, oz1 = ccx - 0.43, ccx + 0.43, 0.3, 1.05
+            holes.append((ox0, ox1, oz0, oz1))
+        # 両端は隣の壁の中に少し入れる (同一平面の重なりを避ける)
+        pw = wall_with_holes('R_仕切り壁_作業室', real, 6.152, 11.87, y0 + 0.001, y1 - 0.001, 0.0, top, holes, M['wall'])
+        if conv is not None:
+            mb = MB()
+            f = 0.03
+            for yy in (y0 - 0.004, y1 + 0.004):
+                mb.box_mm((ox0 - f, yy - 0.004, oz0 - f), (ox1 + f, yy + 0.004, oz0), M['steel'])
+                mb.box_mm((ox0 - f, yy - 0.004, oz1), (ox1 + f, yy + 0.004, oz1 + f), M['steel'])
+                mb.box_mm((ox0 - f, yy - 0.004, oz0), (ox0, yy + 0.004, oz1), M['steel'])
+                mb.box_mm((ox1, yy - 0.004, oz0), (ox1 + f, yy + 0.004, oz1), M['steel'])
+            mb.box_mm((ox0, y0, oz0 - 0.002), (ox1, y1, oz0), M['steel'])
+            mb.build('R_開口枠_コンベヤ', real, bevel=0.003)
+        for o in partition_src:
+            move(o, old)
 
     # コンテナの四隅のコーナーポスト
     if perimeter_walls:
