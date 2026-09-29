@@ -342,6 +342,20 @@ def build_materials():
     M['orange_box'] = new_material('R_電源ボックス', (0.9, 0.3, 0.03), 0.4)[0]
     M['spray_red'] = new_material('R_スプレー缶', (0.75, 0.06, 0.05), 0.3, 0.4)[0]
     M['tape_measure'] = new_material('R_メジャー', (0.9, 0.75, 0.1), 0.35)[0]
+    # テープ貼り機まわり
+    mat, nt, b = new_material('R_ステンレス_使用感', (0.72, 0.72, 0.7), 0.3, 1.0)
+    v = tex_coord(nt)
+    patch = map_range(nt, noise(nt, v, 9, 6, 0.7), 0.45, 0.62, 0.0, 1.0)
+    nt.links.new(ramp(nt, patch, [(0.0, (0.76, 0.76, 0.75)), (1.0, (0.5, 0.47, 0.42))]), b.inputs['Base Color'])
+    nt.links.new(map_range(nt, patch, 0.0, 1.0, 0.22, 0.65), b.inputs['Roughness'])
+    bump(nt, b, noise(nt, v, 60, 4, 0.6, stretch=(1, 30, 1)), 0.03)
+    M['steel_worn'] = mat
+    mat, nt, b = new_material('R_グリップベルト', (0.02, 0.3, 0.13), 0.65)
+    v = tex_coord(nt)
+    bump(nt, b, noise(nt, v, 500, 2, 0.5), 0.5, 0.003)
+    M['grip_belt'] = mat
+    M['motor_gray'] = new_material('R_モーター塗装', (0.35, 0.38, 0.4), 0.4)[0]
+    M['tape_roll'] = new_material('R_テープロール', (0.88, 0.85, 0.75), 0.25, sss=0.3)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
@@ -727,7 +741,8 @@ def build_inoculator(ob, coll, A):
     """
     mn, mx = bounds(ob)
     W, D = mx.x - mn.x, mx.y - mn.y
-    cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+    # 元の箱の -X 端に寄せる (+X 側に隣接するテープ貼り機と重ならないように)
+    cx, cy = mn.x + 0.64, (mn.y + mx.y) / 2
     y0, y1 = -D / 2, D / 2
     mb = MB()
     st, t = M['steel'], 0.04          # 角パイプ 40mm
@@ -966,7 +981,7 @@ def build_conveyor(ob, coll, A):
             x = s * fx
             mb.box((x, y, 0.37), (0.05, 0.05, 0.52), st)
             m = (Matrix.Translation((x, y, bz - 0.11)) @ Matrix.Rotation(math.pi / 4, 4, 'Z'))
-            r = bmesh.ops.create_cone(mb.bm, cap_ends=True, segments=4, radius1=0.036, radius2=0.1,
+            r = bmesh.ops.create_cone(mb.bm, cap_ends=True, segments=4, radius1=0.036, radius2=0.07,
                                       depth=0.08, matrix=m)
             mb._assign(r['verts'], st)
             mb.cyl((x, y, 0.02), (x, y, 0.11), 0.009, M['brass'], 8)       # ねじ棒
@@ -998,22 +1013,104 @@ def build_conveyor(ob, coll, A):
     mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0))
 
 
+def stadium(mb, x0, ya, yb, w, zc, h, th, mat, teeth=True):
+    """縦置きの周回ベルト (上から見て長円形)。歯付き"""
+    r = w / 2
+    n_arc, step = 10, 0.018
+    pts = []
+    # 直線 (右側, +y 方向)
+    y = ya
+    while y < yb:
+        pts.append((x0 + r, y, math.pi / 2)); y += step
+    for k in range(n_arc):
+        a = math.pi * k / n_arc
+        pts.append((x0 + r * math.cos(a), yb + r * math.sin(a), math.pi / 2 + a))
+    y = yb
+    while y > ya:
+        pts.append((x0 - r, y, -math.pi / 2)); y -= step
+    for k in range(n_arc):
+        a = math.pi + math.pi * k / n_arc
+        pts.append((x0 + r * math.cos(a), ya + r * math.sin(a), math.pi / 2 + a))
+    for i, (x, y, ang) in enumerate(pts):
+        out = th * (1.8 if (teeth and i % 2 == 0) else 1.0)
+        # ang はベルト進行方向。外向き法線方向に厚みを持たせる
+        nx, ny = math.cos(ang - math.pi / 2), math.sin(ang - math.pi / 2)
+        mb.box((x + nx * out / 2, y + ny * out / 2, zc), (step * 1.05, out, h), mat, rz=ang)
+
+
 def build_taper(ob, coll, A):
-    """封函機 (コンベヤをまたぐ門型のテープ貼り機)"""
+    """テープ貼り機 (写真ベース): 接種機とコンベヤの間の、緑のグリップベルト 2 本 + テープロール
+
+    元の箱の長手方向 (接種機 → コンベヤ) にベルトを走らせる。
+    ローカルでは長手を Y で組み、長手が X の場合は 90° 回して置く。
+    """
     mn, mx = bounds(ob)
-    W, D, H = mx.x - mn.x, mx.y - mn.y, mx.z
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+    dx, dy = mx.x - mn.x, mx.y - mn.y
+    L, rot = (dx, math.pi / 2) if dx >= dy else (dy, 0.0)
+    W = min(0.3, min(dx, dy))
+    ya, yb = -L / 2, L / 2
+    st, wn = M['steel'], M['steel_worn']
     mb = MB()
-    for sx in (-1, 1):
-        x = sx * (W / 2 - 0.04)
-        mb.box((x, 0, H / 2), (0.08, D, H), M['white_panel'])
-    mb.box((0, 0, H - 0.08), (W, D, 0.16), M['white_panel'])
-    mb.box((0, -D / 2 - 0.002, H - 0.08), (W * 0.7, 0.004, 0.1), M['black_plastic'])
-    # テープロール
-    mb.cyl((0, 0.05, H + 0.02), (0.05, 0.05, H + 0.02), 0.09, M['tape'], 24)
-    mb.cyl((-0.001, 0.05, H + 0.02), (0.051, 0.05, H + 0.02), 0.04, M['card'], 16)
-    mb.box((W / 2 + 0.002, 0, H - 0.1), (0.004, 0.06, 0.06), M['lamp_g'])
-    mb.build('R_' + ob.name, coll, bevel=0.004, loc=(cx, cy, 0))
+    hw = W / 2 - 0.006
+    bz = 0.66                                  # ベルト高さの中心
+    # 側板 (フラットバー) と前の枠
+    for s in (-1, 1):
+        mb.box((s * hw, 0, 0.6), (0.01, L, 0.09), wn)
+    mb.box((0, ya - 0.005, 0.6), (W, 0.01, 0.09), wn)
+    mb.box((0, yb + 0.005, 0.6), (W, 0.01, 0.09), wn)
+    # 赤い押しボタン
+    mb.box((-hw - 0.012, 0.2, 0.62), (0.016, 0.05, 0.035), M['black_plastic'])
+    mb.cyl((-hw - 0.02, 0.2, 0.62), (-hw - 0.028, 0.2, 0.62), 0.011, M['lamp_r'], 14)
+    # フランジ軸受
+    mb.cyl((-hw - 0.005, yb - 0.06, 0.6), (-hw - 0.016, yb - 0.06, 0.6), 0.035, st, 20)
+    mb.cyl((-hw - 0.016, yb - 0.06, 0.6), (-hw - 0.026, yb - 0.06, 0.6), 0.014, M['brass'], 12)
+    # 緑のグリップベルト 2 本 (縦プーリーで周回)
+    for x0 in (-0.03, 0.03):
+        stadium(mb, x0, ya + 0.08, yb - 0.08, 0.05, bz, 0.08, 0.006, M['grip_belt'])
+        for yy in (ya + 0.08, yb - 0.08):
+            mb.cyl((x0, yy, bz - 0.05), (x0, yy, bz + 0.05), 0.022, st, 16)
+    # 脚 (テーパー金具付き) + つなぎ + 足
+    for yy in (ya + 0.05, yb - 0.05):
+        for s in (-1, 1):
+            x = s * (hw - 0.012)
+            mb.box((x, yy, 0.3), (0.03, 0.03, 0.5), st)
+            m = Matrix.Translation((x, yy, 0.53)) @ Matrix.Rotation(math.pi / 4, 4, 'Z')
+            r = bmesh.ops.create_cone(mb.bm, cap_ends=True, segments=4, radius1=0.022, radius2=0.05,
+                                      depth=0.06, matrix=m)
+            mb._assign(r['verts'], wn)
+            mb.cyl((x, yy, 0.0), (x, yy, 0.05), 0.007, M['brass'], 8)
+            mb.cyl((x, yy, 0.0), (x, yy, 0.012), 0.025, M['rubber'], 12)
+        mb.box((0, yy, 0.18), (W - 0.03, 0.025, 0.025), st)
+    for s in (-1, 1):
+        mb.box((s * (hw - 0.012), 0, 0.18), (0.025, L - 0.1, 0.025), st)
+    # モーター (ファン付き、下部)
+    mb.cyl((0, 0.05, 0.36), (0, -0.14, 0.36), 0.05, M['motor_gray'], 20)
+    mb.box((0, 0.1, 0.36), (0.09, 0.1, 0.1), M['motor_gray'])
+    mb.cyl((0, -0.14, 0.36), (0, -0.145, 0.36), 0.045, M['black_plastic'], 20)
+    mb.box((0, 0.05, 0.43), (0.02, 0.02, 0.2), st)
+    # 上部: ボルト留めの大きなステンレス板 (2 本の縦ブラケットで支持)
+    pz0, pz1 = 0.72, 0.9
+    for yy in (-0.15, 0.2):
+        mb.box((hw - 0.004, yy, (0.62 + pz0) / 2 + 0.02), (0.008, 0.05, pz0 - 0.62 + 0.04), wn)
+    mb.box((hw, 0.02, (pz0 + pz1) / 2), (0.006, L - 0.1, pz1 - pz0), wn)
+    for k in range(6):
+        for zz in (pz0 + 0.03, pz1 - 0.03):
+            mb.cyl((hw + 0.003, -0.3 + k * 0.13, zz), (hw + 0.009, -0.3 + k * 0.13, zz), 0.008, st, 6)
+    mb.box((-hw, 0.02, (pz0 + pz1) / 2 - 0.02), (0.006, L - 0.2, pz1 - pz0 - 0.04), wn)
+    # ガイドの樋とロッド
+    mb.box((0, 0.02, pz1 - 0.05), (W - 0.03, L - 0.2, 0.004), st)
+    for yy in (-0.25, 0.0, 0.28):
+        mb.cyl((-hw, yy, pz1 - 0.02), (hw, yy, pz1 - 0.02), 0.009, st, 10)
+    mb.cyl((-hw - 0.02, yb - 0.12, pz1 - 0.04), (hw, yb - 0.12, pz1 - 0.04), 0.02, M['alu'], 16)
+    # テープロール (縦アームの先、軸は X)
+    ax, ay = hw - 0.012, 0.05
+    mb.box((ax, ay, pz1 + 0.13), (0.006, 0.05, 0.28), wn)
+    rz_ = pz1 + 0.26
+    mb.cyl((ax - 0.006, ay, rz_), (ax - 0.05, ay, rz_), 0.075, M['tape_roll'], 32)
+    mb.cyl((ax - 0.005, ay, rz_), (ax - 0.051, ay, rz_), 0.042, M['black_plastic'], 24)
+    mb.cyl((ax - 0.004, ay, rz_), (ax - 0.058, ay, rz_), 0.012, st, 6)
+    mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0), rz=rot)
 
 
 def build_shelf(ob, coll, A):
