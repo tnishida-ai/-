@@ -140,6 +140,8 @@ DOOR_WALL = 'Wall.001'   # コンテナ扉を付ける壁 (北側外周、作業
 DOOR_X = (9.3, 11.5)     # 観音開き扉の開口の X 範囲 (右寄り)
 SINGLE_DOOR_X = (7.15, 8.05)   # 片開き扉の開口の X 範囲 (観音開き扉の左側)
 SINGLE_DOOR_TOP = 1.95         # 片開き扉の開口上端
+AIR_SHOWER_XY = (10.64, 11.84, 2.595, 3.595)   # エアシャワー外形 (W1200 x D1000)
+AIR_SHOWER_BACK_WALL = 'Wall.009'             # エアシャワー出口側の壁 (作業場との境)
 
 
 def build_materials():
@@ -393,6 +395,8 @@ def build_materials():
     M['bolt_head'] = new_material('R_ボルト頭', (0.62, 0.55, 0.42), 0.6)[0]
     M['chrome'] = new_material('R_クローム', (0.9, 0.9, 0.9), 0.08, 1.0)[0]
     M['knob_beige'] = new_material('R_内開放ノブ', (0.78, 0.7, 0.52), 0.4)[0]
+    M['as_panel'] = new_material('R_エアシャワー外装', (0.84, 0.85, 0.85), 0.35)[0]
+    M['nozzle'] = new_material('R_ノズル', (0.35, 0.3, 0.75), 0.35)[0]
     M['plate'] = new_material('R_銘板', (0.45, 0.42, 0.38), 0.4, 0.8)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
@@ -736,6 +740,83 @@ def build_single_door(coll, xa, xb, t0, t1, zt, top):
     mb.sphere((lb - 0.17, yi - 0.035, lz - 0.01), (0.05, 0.012, 0.035), M['knob_beige'], 16, 8)
     mb.cyl(((la + lb) / 2, yi - 0.006, lz + 0.1), ((la + lb) / 2, yi - 0.012, lz + 0.1), 0.006, M['chrome'], 8)
     return mb.build('R_片開き扉', coll, bevel=0.003)
+
+
+def build_air_shower(coll, x0, x1, y0, y1):
+    """エアシャワー (PCJ-88JPM4 の寸法図を参考): 外形 W1200 x D1000 x H2100、通路幅 800
+
+    通り抜けは Y 方向。-Y 側が入口 (前室側)、+Y 側が出口 (作業場側)。
+    """
+    W, D, H = x1 - x0, y1 - y0, 2.1
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    iw = 0.4                                # 通路の半幅 (800)
+    ih = 1.91                               # 通路の高さ
+    pn, st, al = M['as_panel'], M['steel'], M['alu']
+    mb = MB()
+    # 左右のダクト柱
+    for s_ in (-1, 1):
+        mb.box_mm((min(s_ * iw, s_ * W / 2), -D / 2, 0), (max(s_ * iw, s_ * W / 2), D / 2, H), pn)
+        xi = s_ * (iw - 0.004)
+        # 内壁 (ステンレス) + 下部のプレフィルタ・ルーバー
+        mb.box_mm((min(xi, s_ * iw), -D / 2 + 0.06, 0.32), (max(xi, s_ * iw), D / 2 - 0.06, ih), st)
+        mb.box_mm((min(xi, s_ * iw), -D / 2 + 0.06, 0.02), (max(xi, s_ * iw), D / 2 - 0.06, 0.3), M['black_plastic'])
+        for k in range(9):
+            z = 0.04 + k * 0.03
+            mb.box_mm((min(xi - s_ * 0.004, s_ * iw), -D / 2 + 0.07, z), (max(xi - s_ * 0.004, s_ * iw), D / 2 - 0.07, z + 0.014), st)
+        # ノズル 3 段 x 2 列
+        for zz in (0.75, 1.1, 1.45):
+            for yy in (-0.165, 0.165):
+                mb.cyl((xi, yy, zz), (xi - s_ * 0.012, yy, zz), 0.04, st, 20)
+                mb.sphere((xi - s_ * 0.014, yy, zz), (0.012, 0.026, 0.026), M['nozzle'], 16, 8)
+        # ドアロック解除スイッチ (カバー付き、床から 1.5m)
+        mb.box_mm((min(xi - s_ * 0.02, xi), -D / 2 + 0.1, 1.46), (max(xi - s_ * 0.02, xi), -D / 2 + 0.18, 1.56), M['lamp_y'])
+        # 外側のパネル目地
+        xo = s_ * W / 2
+        for zz in (0.7, 1.4):
+            mb.box_mm((min(xo, xo + s_ * 0.002), -D / 2 + 0.02, zz), (max(xo, xo + s_ * 0.002), D / 2 - 0.02, zz + 0.004), M['black_plastic'])
+    # 天井ボックス
+    mb.box_mm((-iw, -D / 2, ih), (iw, D / 2, H), pn)
+    mb.box_mm((-0.3, -0.25, ih - 0.004), (0.3, 0.25, ih), M['led'])                       # LED 照明
+    for yy in (-0.2, 0.2):                                                               # 天井ノズル
+        mb.cyl((0, yy, ih), (0, yy, ih - 0.012), 0.04, st, 20)
+        mb.sphere((0, yy, ih - 0.014), (0.026, 0.026, 0.012), M['nozzle'], 16, 8)
+    # イオン発生器 (入口側の天井際)
+    mb.box_mm((-0.25, -D / 2 + 0.05, ih - 0.06), (0.25, -D / 2 + 0.12, ih), M['gray_paint'])
+    mb.box_mm((0.18, -D / 2 + 0.048, ih - 0.04), (0.22, -D / 2 + 0.05, ih - 0.02), M['lamp_g'])
+    # 床のステンレス板
+    mb.box_mm((-iw, -D / 2, 0.0), (iw, D / 2, 0.012), M['steel_worn'])
+    # 入口・出口の扉 (アルミ枠 + 強化ガラス窓) と枠、ドアクローザー、取っ手
+    for s_ in (-1, 1):
+        yf = s_ * D / 2
+        # 扉枠
+        for xa_, xb_ in ((-iw - 0.03, -iw), (iw, iw + 0.03)):
+            mb.box_mm((xa_, min(yf, yf + s_ * 0.012), 0), (xb_, max(yf, yf + s_ * 0.012), ih + 0.03), al)
+        mb.box_mm((-iw - 0.03, min(yf, yf + s_ * 0.012), ih), (iw + 0.03, max(yf, yf + s_ * 0.012), ih + 0.03), al)
+        # 扉 (少し内側に)
+        yd0, yd1 = sorted((yf - s_ * 0.045, yf - s_ * 0.005))
+        la, lb, h0, h1 = -iw + 0.005, iw - 0.005, 0.015, ih - 0.005
+        f = 0.07
+        mb.box_mm((la, yd0, h0), (la + f, yd1, h1), al)
+        mb.box_mm((lb - f, yd0, h0), (lb, yd1, h1), al)
+        mb.box_mm((la + f, yd0, h0), (lb - f, yd1, 0.35), al)
+        mb.box_mm((la + f, yd0, h1 - 0.1), (lb - f, yd1, h1), al)
+        mb.box_mm((la + f, (yd0 + yd1) / 2 - 0.0025, 0.35), (lb - f, (yd0 + yd1) / 2 + 0.0025, h1 - 0.1), M['glass'])
+        # 取っ手 (内外)
+        hx = lb - 0.04
+        for ys in (yd0, yd1):
+            out = -1 if ys == yd0 else 1
+            mb.cyl((hx, ys + out * 0.035, 0.85), (hx, ys + out * 0.035, 1.2), 0.012, st, 10)
+            for zz in (0.87, 1.18):
+                mb.cyl((hx, ys, zz), (hx, ys + out * 0.035, zz), 0.008, st, 8)
+        # ドアクローザー (外側上部)
+        yo = yf + s_ * 0.012
+        mb.box_mm((la + 0.1, min(yo, yo + s_ * 0.05), ih + 0.035), (la + 0.4, max(yo, yo + s_ * 0.05), ih + 0.09), M['alu'])
+        # 表示器 (入口側の外側ヘッダー)
+        if s_ < 0:
+            mb.box_mm((0.12, yo + s_ * 0.004, ih + 0.1), (0.3, yo, ih + 0.16), M['black_plastic'])
+            mb.box_mm((0.14, yo + s_ * 0.005, ih + 0.11), (0.28, yo + s_ * 0.004, ih + 0.15), M['counter'])
+            mb.box_mm((-0.3, yo + s_ * 0.003, ih + 0.11), (-0.1, yo, ih + 0.15), M['white_panel'])
+    return mb.build('R_エアシャワー', coll, bevel=0.003, loc=(cx, cy, 0))
 
 
 def wall_with_holes(name, coll, x0, x1, y0, y1, z0, z1, holes, mat):
@@ -1742,6 +1823,7 @@ def main():
     workers = []
     perimeter_walls = []
     partition_src = []
+    partition_src_as = []
     window_bounds = []
     for ob in objs:
         n = ob.name
@@ -1811,8 +1893,15 @@ def main():
                 perimeter_walls.append(ob)
                 move(ob, old)
                 continue
-            if n in ('Wall.005', 'Wall.022', 'Wall.018'):
-                mat = M['door'] if n != 'Wall.018' else M['steel']
+            if n in ('Wall.010', 'Wall.011', 'Wall.018'):
+                # 旧エアシャワー (側壁・扉) → 後で既製品のエアシャワーに置き換え
+                move(ob, old)
+                continue
+            if n == AIR_SHOWER_BACK_WALL:
+                partition_src_as.append(ob)
+                continue
+            if n in ('Wall.005', 'Wall.022'):
+                mat = M['door']
                 ob.data.materials.clear(); ob.data.materials.append(mat)
                 mn, mx = bounds(ob)
                 mb = MB()
@@ -1821,8 +1910,6 @@ def main():
                     mb.box((x, y, mx.z * 0.48), (0.1, 0.02, 0.02), M['steel'])
                 mb.box_mm((mn.x + 0.1, mn.y - 0.002, mx.z * 0.57), (mx.x - 0.1, mx.y + 0.002, mx.z * 0.86), M['glass'])
                 mb.build('R_取っ手_' + n, real)
-            elif n in ('Wall.010', 'Wall.011'):
-                ob.data.materials.clear(); ob.data.materials.append(M['steel'])
             else:
                 ob.data.materials.clear(); ob.data.materials.append(M['wall'])
             shrink_mesh(ob, random.uniform(0.0006, 0.0025))
@@ -1859,6 +1946,16 @@ def main():
             mb.build('R_開口枠_コンベヤ', real, bevel=0.003)
         for o in partition_src:
             move(o, old)
+
+    # エアシャワー + 出口側の壁 (開口つき)
+    ax0, ax1, ay0, ay1 = AIR_SHOWER_XY
+    build_air_shower(real, ax0, ax1, ay0, ay1)
+    for o in partition_src_as:
+        wmn, wmx = bounds(o)
+        acx = (ax0 + ax1) / 2
+        wall_with_holes('R_壁_' + o.name, real, wmn.x, 11.87, wmn.y + 0.001, wmx.y - 0.001, 0.0, wmx.z,
+                        [(acx - 0.4, acx + 0.4, 0.0, 1.91)], M['wall'])
+        move(o, old)
 
     # コンテナの四隅のコーナーポスト
     if perimeter_walls:
