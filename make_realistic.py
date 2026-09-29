@@ -142,6 +142,10 @@ SINGLE_DOOR_X = (7.15, 8.05)   # 片開き扉の開口の X 範囲 (観音開き
 SINGLE_DOOR_TOP = 1.95         # 片開き扉の開口上端
 AIR_SHOWER_XY = (10.64, 11.84, 2.595, 3.595)   # エアシャワー外形 (W1200 x D1000)
 AIR_SHOWER_BACK_WALL = 'Wall.009'             # エアシャワー出口側の壁 (作業場との境)
+STEEL_FLOOR_ROOMS = {                          # 鉄板の床にする部屋 (x0, x1, y0, y1)
+    '前室': (9.15, 11.86, 0.16, 3.6),
+    '作業室': (6.15, 11.86, 11.0, 15.85),
+}
 
 
 def build_materials():
@@ -397,6 +401,34 @@ def build_materials():
     M['knob_beige'] = new_material('R_内開放ノブ', (0.78, 0.7, 0.52), 0.4)[0]
     M['as_panel'] = new_material('R_エアシャワー外装', (0.84, 0.85, 0.85), 0.35)[0]
     M['nozzle'] = new_material('R_ノズル', (0.35, 0.3, 0.75), 0.35)[0]
+    # 鉄板の床 (1200 x 2400 割付の目地、色ムラ・擦り傷・汚れ)
+    mat, nt, b = new_material('R_鉄板床', (0.4, 0.41, 0.42), 0.4, 0.9)
+    geo = nt.nodes.new('ShaderNodeNewGeometry')
+    pos = geo.outputs['Position']
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(pos, sep.inputs[0])
+    masks = []
+    for axis, pitch in (('X', 1.2), ('Y', 2.4)):
+        f = math_node(nt, 'FRACT', math_node(nt, 'DIVIDE', sep.outputs[axis], pitch))
+        d = math_node(nt, 'MINIMUM', f, math_node(nt, 'SUBTRACT', 1.0, f))
+        masks.append(map_range(nt, math_node(nt, 'MULTIPLY', d, pitch), 0.0, 0.003, 1.0, 0.0))
+    seam = math_node(nt, 'MAXIMUM', masks[0], masks[1])
+    mottle = noise(nt, pos, 1.5, 6, 0.6)
+    base = ramp(nt, mottle, [(0.3, (0.3, 0.31, 0.32)), (0.55, (0.42, 0.43, 0.44)), (0.8, (0.5, 0.49, 0.47))])
+    dirt = map_range(nt, noise(nt, pos, 4, 5, 0.65), 0.5, 0.7, 0.0, 0.7)
+    mix1 = nt.nodes.new('ShaderNodeMix'); mix1.data_type = 'RGBA'
+    nt.links.new(dirt, mix1.inputs['Factor'])
+    nt.links.new(base, mix1.inputs[6])
+    mix1.inputs[7].default_value = (0.18, 0.17, 0.15, 1)
+    mix2 = nt.nodes.new('ShaderNodeMix'); mix2.data_type = 'RGBA'
+    nt.links.new(seam, mix2.inputs['Factor'])
+    nt.links.new(mix1.outputs[2], mix2.inputs[6])
+    mix2.inputs[7].default_value = (0.05, 0.05, 0.05, 1)
+    nt.links.new(mix2.outputs[2], b.inputs['Base Color'])
+    scratch = noise(nt, pos, 25, 4, 0.6, stretch=(1, 12, 1))
+    nt.links.new(map_range(nt, math_node(nt, 'ADD', scratch, dirt), 0.3, 1.2, 0.28, 0.65), b.inputs['Roughness'])
+    bump(nt, b, math_node(nt, 'SUBTRACT', math_node(nt, 'MULTIPLY', scratch, 0.2), seam), 0.3, 0.002)
+    M['floor_steel'] = mat
     M['plate'] = new_material('R_銘板', (0.45, 0.42, 0.38), 0.4, 0.8)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
@@ -1865,8 +1897,7 @@ def main():
         elif n == 'Floor':
             ob.data.materials.clear(); ob.data.materials.append(M['floor'])
         elif n == 'Floor.001':
-            ob.data.materials.clear(); ob.data.materials.append(M['vinyl'])
-            ob.location.z += 0.002
+            move(ob, old)   # 前室の緑シート → 鉄板の床に置き換え (下で作成)
         elif base == 'Wall':
             if n in ('Wall.007', 'Wall.012'):
                 # 作業室との仕切り: 後で 1 枚の穴あき壁として作り直す
@@ -1957,6 +1988,12 @@ def main():
         wall_with_holes('R_壁_' + o.name, real, wmn.x, 11.87, wmn.y + 0.001, wmx.y - 0.001, 0.0, wmx.z,
                         [(acx - 0.4, acx + 0.4, 0.0, 1.91)], M['wall'])
         move(o, old)
+
+    # 壁で仕切られた部屋 (前室・作業室) の床は鉄板
+    for name, (fx0, fx1, fy0, fy1) in STEEL_FLOOR_ROOMS.items():
+        mb = MB()
+        mb.box_mm((fx0, fy0, 0.0), (fx1, fy1, 0.006), M['floor_steel'])
+        mb.build('R_鉄板床_' + name, real, bevel=0.002)
 
     # コンテナの四隅のコーナーポスト
     if perimeter_walls:
