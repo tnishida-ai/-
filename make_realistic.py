@@ -1427,7 +1427,7 @@ def build_taper(ob, coll, A):
     mb.build('R_' + ob.name, coll, bevel=0.002, loc=(cx, cy, 0), rz=rot)
 
 
-RACK_W = 2.0        # ラックの幅 (元の箱 3m の中央に 1 台)
+RACK_W = 1.8        # ラックの幅 (観音開き扉の開口 2.2m よりひと回り小さく)
 RACK_H = 1.8
 RACK_D = 0.8
 RACK_LEVELS = 17
@@ -1459,7 +1459,7 @@ def asset_tray(root, w, d):
 
 
 def build_shelf(ob, coll, A):
-    """作業室の棚 → 菌床トレー用の移動ラック (亜鉛メッキ角パイプ + 黒トレー 20 段 + 縦ワイヤー)"""
+    """作業室の棚 → 菌床トレー用の移動ラック (亜鉛メッキ角パイプ + 黒トレー + 縦ワイヤー)。観音開き扉の正面に置く"""
     mn, mx = bounds(ob)
     W, D = mx.x - mn.x, mx.y - mn.y
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
@@ -1473,7 +1473,7 @@ def build_shelf(ob, coll, A):
         A['tray'] = asset_tray(bpy.data.collections['_アセット'], tray_w, tray_d)
     g = M['galv_tube']
     for i in range(n_rack):
-        rx = cx - W / 2 + (i + 0.5) * W / n_rack
+        rx = (DOOR_X[0] + DOOR_X[1]) / 2
         mb = MB()
         z0, z1 = 0.13, RACK_H
         ys = (-dd / 2 + t / 2, 0.0, dd / 2 - t / 2)
