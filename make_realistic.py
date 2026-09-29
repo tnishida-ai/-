@@ -172,6 +172,42 @@ def build_materials():
     bump(nt, b, math_node(nt, 'SUBTRACT', 1.0, seam), 0.3, 0.003)
     M['wall'] = mat
 
+    # コンテナの塗装鋼板 (オフホワイト、下部の汚れ・点状のシミ・縦の色ムラ)
+    mat, nt, b = new_material('R_コンテナ波板', (0.66, 0.67, 0.64), 0.45)
+    geo = nt.nodes.new('ShaderNodeNewGeometry')
+    pos = geo.outputs['Position']
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(pos, sep.inputs[0])
+    streak = noise(nt, pos, 3.0, 4, 0.5, stretch=(6, 6, 0.4))
+    base = ramp(nt, streak, [(0.3, (0.58, 0.59, 0.56)), (0.7, (0.72, 0.73, 0.69))])
+    # 下ほど汚れる
+    low = map_range(nt, sep.outputs['Z'], 0.0, 0.9, 1.0, 0.0)
+    grime_n = noise(nt, pos, 8.0, 6, 0.65)
+    grime = math_node(nt, 'MULTIPLY', low, map_range(nt, grime_n, 0.35, 0.65, 0.1, 0.8))
+    mix1 = nt.nodes.new('ShaderNodeMix'); mix1.data_type = 'RGBA'
+    nt.links.new(grime, mix1.inputs['Factor'])
+    nt.links.new(base, mix1.inputs[6])
+    mix1.inputs[7].default_value = (0.5, 0.48, 0.42, 1)
+    # 点状のシミ (ボロノイの小さな点、下半分に多め)
+    vor = nt.nodes.new('ShaderNodeTexVoronoi')
+    vor.inputs['Scale'].default_value = 30.0
+    nt.links.new(pos, vor.inputs['Vector'])
+    dots = map_range(nt, vor.outputs['Distance'], 0.04, 0.09, 1.0, 0.0)
+    dots_mask = map_range(nt, noise(nt, pos, 2.5, 3), 0.42, 0.55, 0.0, 1.0)
+    dots = math_node(nt, 'MULTIPLY', dots, dots_mask)
+    dots = math_node(nt, 'MULTIPLY', dots, map_range(nt, sep.outputs['Z'], 0.2, 1.0, 1.0, 0.25))
+    mix2 = nt.nodes.new('ShaderNodeMix'); mix2.data_type = 'RGBA'
+    nt.links.new(dots, mix2.inputs['Factor'])
+    nt.links.new(mix1.outputs[2], mix2.inputs[6])
+    mix2.inputs[7].default_value = (0.08, 0.08, 0.075, 1)
+    nt.links.new(mix2.outputs[2], b.inputs['Base Color'])
+    nt.links.new(map_range(nt, grime, 0.0, 0.8, 0.4, 0.7), b.inputs['Roughness'])
+    # 塗膜の凹凸と板のゆがみ
+    dent = noise(nt, pos, 1.2, 3, 0.5)
+    fine = noise(nt, pos, 250, 2, 0.5)
+    bump(nt, b, math_node(nt, 'ADD', dent, math_node(nt, 'MULTIPLY', fine, 0.15)), 0.08, 0.02)
+    M['container'] = mat
+
     # 扉 (焼付塗装鋼板)
     M['door'] = new_material('R_扉', (0.62, 0.66, 0.68), 0.35)[0]
 
@@ -363,6 +399,59 @@ def shrink_mesh(ob, eps):
         d = v.co - c
         v.co = Vector([v.co[i] - math.copysign(eps / max(abs(sc[i]), 1e-6), d[i]) if abs(d[i]) > 1e-5 else v.co[i]
                        for i in range(3)])
+
+
+def build_corrugated(ob, coll):
+    """コンテナの台形波板壁。壁の箱の範囲を、両面とも同じ波形を持つ鋼板で置き換える"""
+    mn, mx = bounds(ob)
+    along_x = (mx.x - mn.x) >= (mx.y - mn.y)
+    u0, u1 = (mn.x, mx.x) if along_x else (mn.y, mx.y)
+    t0, t1 = (mn.y, mx.y) if along_x else (mn.x, mx.x)
+    z0, z1 = max(mn.z, 0.0) + 0.001, mx.z
+    D = 0.036                       # 波の深さ
+    seg = (0.10, 0.035, 0.108, 0.035)   # 山の平部 / 斜面 / 谷の平部 / 斜面 (ピッチ 278mm)
+    prof = [(u0, 0.0)]
+    u, k = u0, 0
+    depth_at = (0.0, D, D, 0.0)
+    while u < u1:
+        u = min(u + seg[k % 4], u1)
+        prof.append((u, depth_at[k % 4]))
+        k += 1
+    verts, faces = [], []
+
+    def P(uu, tt, zz):
+        return (uu, tt, zz) if along_x else (tt, uu, zz)
+    for uu, c in prof:
+        lo, hi = t0 + c, t1 - D + c
+        verts += [P(uu, lo, z0), P(uu, hi, z0), P(uu, lo, z1), P(uu, hi, z1)]
+    for i in range(len(prof) - 1):
+        a, b = 4 * i, 4 * (i + 1)
+        faces += [(a, b, b + 2, a + 2),          # 面 lo
+                  (a + 1, a + 3, b + 3, b + 1),  # 面 hi
+                  (a, a + 1, b + 1, b),          # 下
+                  (a + 2, b + 2, b + 3, a + 3)]  # 上
+    e = 4 * (len(prof) - 1)
+    faces += [(0, 2, 3, 1), (e, e + 1, e + 3, e + 2)]
+    me = bpy.data.meshes.new('R_波板_' + ob.name)
+    me.from_pydata(verts, [], faces)
+    me.materials.append(M['container'])
+    me.validate()
+    wo = bpy.data.objects.new('R_波板_' + ob.name, me)
+    coll.objects.link(wo)
+    bv = wo.modifiers.new('Bevel', 'BEVEL')
+    bv.width = 0.004
+    bv.segments = 2
+    bv.limit_method = 'ANGLE'
+    # 上下のレール (角パイプ)
+    mb = MB()
+    def rail(za, zb):
+        if along_x:
+            mb.box_mm((u0, t0 - 0.012, za), (u1, t1 + 0.012, zb), M['container'])
+        else:
+            mb.box_mm((t0 - 0.012, u0, za), (t1 + 0.012, u1, zb), M['container'])
+    rail(z1 - 0.07, z1 + 0.004)
+    rail(0.0005, 0.085)
+    mb.build('R_レール_' + ob.name, coll, bevel=0.006)
 
 
 def instance(asset_coll, name, coll, loc, rz=0.0):
@@ -993,6 +1082,7 @@ def main():
 
     objs = list(bpy.data.objects)
     workers = []
+    perimeter_walls = []
     for ob in objs:
         n = ob.name
         base = n.split('.')[0]
@@ -1050,6 +1140,16 @@ def main():
                 mb.build('R_窓_' + n, real)
                 move(ob, old)
                 continue
+            mn_, mx_ = bounds(ob)
+            thin = min(mx_.x - mn_.x, mx_.y - mn_.y) < 0.2
+            on_perimeter = (mx_.y < 0.25 or mn_.y > 15.75) if (mx_.x - mn_.x) > (mx_.y - mn_.y) \
+                else (mx_.x < 0.25 or mn_.x > 11.75)
+            if thin and on_perimeter and (mx_.z - mn_.z) > 1.0 and n not in ('Wall.022',):
+                # 外周 = コンテナの壁 → 台形波板
+                build_corrugated(ob, real)
+                perimeter_walls.append(ob)
+                move(ob, old)
+                continue
             if n in ('Wall.005', 'Wall.022', 'Wall.018'):
                 mat = M['door'] if n != 'Wall.018' else M['steel']
                 ob.data.materials.clear(); ob.data.materials.append(mat)
@@ -1070,6 +1170,13 @@ def main():
                 bv.width = 0.006
                 bv.segments = 2
                 bv.limit_method = 'ANGLE'
+
+    # コンテナの四隅のコーナーポスト
+    if perimeter_walls:
+        mb = MB()
+        for cx_, cy_ in ((0.075, 0.08), (11.925, 0.08), (0.075, 15.925), (11.925, 15.925)):
+            mb.box((cx_, cy_, 0.6), (0.19, 0.19, 1.204), M['container'])
+        mb.build('R_コーナーポスト', real, bevel=0.008)
 
     # 作業者: 近くの作業対象の方を向かせる
     targets = [
