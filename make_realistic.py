@@ -227,10 +227,11 @@ def build_materials():
     M['glass'] = new_material('R_ガラス', (0.95, 0.97, 0.97), 0.02, transmission=1.0, ior=1.5)[0]
     M['acrylic'] = new_material('R_アクリル', (0.92, 0.95, 0.95), 0.05, transmission=1.0, ior=1.49)[0]
 
-    # 青色樹脂パレット
-    mat, nt, b = new_material('R_樹脂パレット', (0.03, 0.17, 0.52), 0.5)
+    # 黒色樹脂パレット
+    mat, nt, b = new_material('R_樹脂パレット', (0.02, 0.02, 0.022), 0.5)
     v = tex_coord(nt)
-    nt.links.new(ramp(nt, noise(nt, v, 6, 4), [(0.3, (0.025, 0.14, 0.45)), (0.7, (0.04, 0.19, 0.56))]), b.inputs['Base Color'])
+    nt.links.new(ramp(nt, noise(nt, v, 6, 4), [(0.3, (0.012, 0.012, 0.014)), (0.7, (0.03, 0.03, 0.032))]), b.inputs['Base Color'])
+    nt.links.new(map_range(nt, noise(nt, v, 3, 4), 0.35, 0.65, 0.4, 0.65), b.inputs['Roughness'])
     bump(nt, b, noise(nt, v, 150, 2), 0.05)
     M['pallet'] = mat
 
@@ -650,19 +651,7 @@ def build_pallet(ob, coll, A):
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
     rz = math.radians(random.uniform(-1.5, 1.5))
     instance(A['pallet'], 'R_' + ob.name, coll, (cx, cy, 0), rz)
-    layers = random.choice((0, 1, 2, 2, 3, 3, 3))
-    rot = Matrix.Rotation(rz, 4, 'Z')
-    for L in range(layers):
-        for i in range(4):
-            for j in range(4):
-                # 最上段は歯抜けにして手作業中の雰囲気を出す
-                if L == layers - 1 and layers > 1 and random.random() < 0.18:
-                    continue
-                off = rot @ Vector(((i - 1.5) * (CRATE + 0.003), (j - 1.5) * (CRATE + 0.003), 0))
-                jit = random.uniform(-0.006, 0.006)
-                instance(A['crate'], 'コンテナ', coll,
-                         (cx + off.x + jit, cy + off.y - jit, PALLET_H + L * CRATE_H),
-                         rz + math.radians(random.uniform(-1, 1)))
+    # パレットの上には何も載せない
 
 
 def build_seed(ob, coll, A):
