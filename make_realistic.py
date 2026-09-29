@@ -148,7 +148,41 @@ def build_materials():
     nt.links.new(mix.outputs[2], b.inputs['Base Color'])
     nt.links.new(map_range(nt, noise(nt, v, 0.8, 5, 0.6), 0.3, 0.7, 0.12, 0.38), b.inputs['Roughness'])
     bump(nt, b, noise(nt, v, 60, 3), 0.05)
+    # 使用感: 台車・ハンドリフトのタイヤ痕 (Y 方向の筋)、擦れ、壁際のほこり
+    geo = nt.nodes.new('ShaderNodeNewGeometry')
+    wp = geo.outputs['Position']
+    wsep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(wp, wsep.inputs[0])
+    tire = map_range(nt, noise(nt, wp, 1.0, 3, 0.5, stretch=(9, 0.25, 1)), 0.56, 0.7, 0.0, 1.0)
+    tire = math_node(nt, 'MULTIPLY', tire,
+                     map_range(nt, noise(nt, wp, 0.35, 2), 0.35, 0.6, 0.0, 0.8))
+    scuff = map_range(nt, noise(nt, wp, 7.0, 5, 0.7), 0.62, 0.75, 0.0, 0.35)
+    wd = math_node(nt, 'MINIMUM',
+                   math_node(nt, 'MINIMUM', wsep.outputs['X'], math_node(nt, 'SUBTRACT', 12.0, wsep.outputs['X'])),
+                   math_node(nt, 'MINIMUM', wsep.outputs['Y'], math_node(nt, 'SUBTRACT', 16.0, wsep.outputs['Y'])))
+    edge = math_node(nt, 'MULTIPLY', map_range(nt, wd, 0.15, 0.6, 0.6, 0.0),
+                     map_range(nt, noise(nt, wp, 4.0, 4), 0.3, 0.7, 0.4, 1.0))
+    wear = math_node(nt, 'MAXIMUM', math_node(nt, 'MAXIMUM', tire, scuff), edge)
+    mixw = nt.nodes.new('ShaderNodeMix'); mixw.data_type = 'RGBA'
+    nt.links.new(wear, mixw.inputs['Factor'])
+    nt.links.new(mix.outputs[2], mixw.inputs[6])
+    mixw.inputs[7].default_value = (0.30, 0.31, 0.30, 1)
+    nt.links.new(mixw.outputs[2], b.inputs['Base Color'])
+    rough_base = b.inputs['Roughness'].links[0].from_socket
+    nt.links.new(math_node(nt, 'ADD', rough_base, math_node(nt, 'MULTIPLY', wear, 0.35)), b.inputs['Roughness'])
+    set_input(b, ['Coat Weight', 'Clearcoat'], 0.6)
+    coat_w = math_node(nt, 'MULTIPLY', math_node(nt, 'SUBTRACT', 1.0, wear), 0.6)
+    if 'Coat Weight' in b.inputs:
+        nt.links.new(coat_w, b.inputs['Coat Weight'])
     M['floor'] = mat
+
+    # 床の区画線 (黄色の塗装。かすれ・擦れあり)
+    mat, nt, b = new_material('R_区画線_黄', (0.75, 0.52, 0.02), 0.45)
+    geo = nt.nodes.new('ShaderNodeNewGeometry')
+    fade = map_range(nt, noise(nt, geo.outputs['Position'], 14.0, 5, 0.7), 0.35, 0.6, 1.0, 0.0)
+    nt.links.new(ramp(nt, fade, [(0.0, (0.75, 0.52, 0.02)), (1.0, (0.42, 0.40, 0.33))]), b.inputs['Base Color'])
+    nt.links.new(map_range(nt, fade, 0.0, 1.0, 0.4, 0.7), b.inputs['Roughness'])
+    M['floor_line'] = mat
 
     # 前室の緑色長尺シート
     mat, nt, b = new_material('R_長尺シート_緑', (0.09, 0.30, 0.16), 0.45)
@@ -234,12 +268,39 @@ def build_materials():
     bump(nt, b, noise(nt, v, 150, 2), 0.05)
     M['pallet'] = mat
 
-    # 培養ビン用コンテナ (紺)
-    M['crate'] = new_material('R_コンテナ', (0.03, 0.06, 0.16), 0.45)[0]
-    # PP 培養ビン (半透明)
-    M['bottle'] = new_material('R_培養ビン', (0.85, 0.83, 0.75), 0.25, sss=0.3, transmission=0.3)[0]
-    # ビンのキャップ
-    M['cap'] = new_material('R_キャップ', (0.92, 0.92, 0.9), 0.4)[0]
+    # 培養ビン用コンテナ (紺)。コンテナごとに色・つやをわずかに変える
+    mat, nt, b = new_material('R_コンテナ', (0.03, 0.06, 0.16), 0.45)
+    oi = nt.nodes.new('ShaderNodeObjectInfo')
+    nt.links.new(ramp(nt, oi.outputs['Random'], [(0.0, (0.022, 0.048, 0.14)), (1.0, (0.04, 0.075, 0.19))]),
+                 b.inputs['Base Color'])
+    v = tex_coord(nt)
+    nt.links.new(map_range(nt, noise(nt, v, 25, 4), 0.3, 0.7, 0.35, 0.6), b.inputs['Roughness'])
+    M['crate'] = mat
+
+    # PP 培養ビン: 半透明の容器越しに、おが粉培地 (茶) と上から回る白い菌糸が見える。
+    # 菌糸のまわり具合はコンテナごとに違う (Object Info の Random)
+    mat, nt, b = new_material('R_培養ビン', (0.6, 0.5, 0.38), 0.22, sss=0.15, transmission=0.15, coat=0.4)
+    oi = nt.nodes.new('ShaderNodeObjectInfo')
+    v = tex_coord(nt)
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(v, sep.inputs[0])
+    front = map_range(nt, oi.outputs['Random'], 0.0, 1.0, 0.16, -0.02)   # 菌糸の先端の高さ
+    wob = math_node(nt, 'MULTIPLY', noise(nt, v, 30, 4, 0.6), 0.05)
+    grown = map_range(nt, math_node(nt, 'SUBTRACT', math_node(nt, 'ADD', sep.outputs['Z'], wob), front),
+                      -0.01, 0.015, 0.0, 1.0)
+    sub = ramp(nt, noise(nt, v, 90, 5, 0.7), [(0.3, (0.26, 0.15, 0.06)), (0.7, (0.42, 0.28, 0.13))])
+    myc = ramp(nt, noise(nt, v, 60, 4), [(0.3, (0.78, 0.76, 0.68)), (0.7, (0.9, 0.89, 0.83))])
+    mixb = nt.nodes.new('ShaderNodeMix'); mixb.data_type = 'RGBA'
+    nt.links.new(grown, mixb.inputs['Factor'])
+    nt.links.new(sub, mixb.inputs[6]); nt.links.new(myc, mixb.inputs[7])
+    nt.links.new(mixb.outputs[2], b.inputs['Base Color'])
+    M['bottle'] = mat
+    # ビンのキャップ (わずかな黄ばみの個体差)
+    mat, nt, b = new_material('R_キャップ', (0.92, 0.92, 0.9), 0.4)
+    oi = nt.nodes.new('ShaderNodeObjectInfo')
+    nt.links.new(ramp(nt, oi.outputs['Random'], [(0.0, (0.93, 0.93, 0.91)), (1.0, (0.86, 0.85, 0.79))]),
+                 b.inputs['Base Color'])
+    M['cap'] = mat
     # フィルター部 (キャップ中央)
     M['filter'] = new_material('R_フィルター', (0.75, 0.72, 0.62), 0.9)[0]
 
@@ -491,7 +552,7 @@ def asset_crate(root):
     """16 本入り培養ビンコンテナ"""
     c = make_asset_collection('_A_培養ビンコンテナ', root)
     mb = MB()
-    s, h, t = CRATE, 0.14, 0.012
+    s, h, t = CRATE, 0.085, 0.012   # 側板は低め (ビンの中身が見える)
     mb.box((0, 0, 0.006), (s - 0.01, s - 0.01, 0.012), M['crate'])
     for sx, sy, w, d in ((1, 0, t, s), (-1, 0, t, s), (0, 1, s, t), (0, -1, s, t)):
         x = sx * (s / 2 - t / 2)
@@ -499,7 +560,7 @@ def asset_crate(root):
         mb.box((x, y, h / 2), (w, d, h), M['crate'])
         # 取っ手の窓
         if sx:
-            mb.box((x * 1.001, y, h - 0.03), (t * 1.2, 0.1, 0.025), M['black_plastic'])
+            mb.box((x * 1.001, y, h - 0.025), (t * 1.2, 0.1, 0.022), M['black_plastic'])
     step = 0.085
     for i in range(4):
         for j in range(4):
@@ -601,6 +662,21 @@ def build_pallet(ob, coll, A):
                 instance(A['crate'], 'コンテナ', coll,
                          (cx + off.x + jit, cy + off.y - jit, PALLET_H + L * CRATE_H),
                          rz + math.radians(random.uniform(-1, 1)))
+
+
+def build_pallet_marks(pallets, coll):
+    """パレット置き場の床に黄色の L 字コーナーマーク (区画表示) を描く"""
+    mb = MB()
+    h, L, w, z = 0.82, 0.28, 0.05, 0.0012
+    for ob in pallets:
+        mn, mx = bounds(ob)
+        cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                x, y = cx + sx * h, cy + sy * h
+                mb.box_mm((min(x, x - sx * L), y - w / 2, 0.0003), (max(x, x - sx * L), y + w / 2, z), M['floor_line'])
+                mb.box_mm((x - w / 2, min(y, y - sy * L), 0.0003), (x + w / 2, max(y, y - sy * L), z), M['floor_line'])
+    mb.build('R_床_区画マーク', coll)
 
 
 def build_seed(ob, coll, A):
@@ -1083,6 +1159,7 @@ def main():
     objs = list(bpy.data.objects)
     workers = []
     perimeter_walls = []
+    pallets = []
     for ob in objs:
         n = ob.name
         base = n.split('.')[0]
@@ -1092,7 +1169,7 @@ def main():
         if ob.type != 'MESH':
             continue
         if base == 'パレット':
-            build_pallet(ob, real, A); move(ob, old)
+            build_pallet(ob, real, A); pallets.append(ob); move(ob, old)
         elif base == '種トレー':
             build_seed(ob, real, A); move(ob, old)
         elif base == '台':
@@ -1202,6 +1279,7 @@ def main():
                      ((mn.x + mx.x) / 2 + off[0], (mn.y + mx.y) / 2 + off[1], mx.z), math.radians(random.uniform(-5, 5)))
 
     build_extras(real)
+    build_pallet_marks(pallets, real)
 
 
     setup_world_and_lights(scene, real)
