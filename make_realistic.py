@@ -1405,11 +1405,10 @@ def main():
             thin = min(mx_.x - mn_.x, mx_.y - mn_.y) < 0.2
             on_perimeter = (mx_.y < 0.25 or mn_.y > 15.75) if (mx_.x - mn_.x) > (mx_.y - mn_.y) \
                 else (mx_.x < 0.25 or mn_.x > 11.75)
-            if n not in ('Wall.005', 'Wall.022', 'Wall.018', 'Wall.010', 'Wall.011'):
-                # 外周・仕切りとも コンテナの壁 → 台形波板 (扉・エアシャワーは除く)
+            if thin and on_perimeter and (mx_.z - mn_.z) > 1.0 and n not in ('Wall.022',):
+                # 外周 = コンテナの壁 → 台形波板 (仕切り壁はクリーンルームパネルのまま)
                 build_corrugated(ob, real)
-                if thin and on_perimeter and (mx_.z - mn_.z) > 1.0:
-                    perimeter_walls.append(ob)
+                perimeter_walls.append(ob)
                 move(ob, old)
                 continue
             if n in ('Wall.005', 'Wall.022', 'Wall.018'):
