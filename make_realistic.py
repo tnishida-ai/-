@@ -495,8 +495,10 @@ def build_corrugated(ob, coll):
             mb.box_mm((u0, t0 - 0.012, za), (u1, t1 + 0.012, zb), M['container'])
         else:
             mb.box_mm((t0 - 0.012, u0, za), (t1 + 0.012, u1, zb), M['container'])
-    rail(z1 - 0.07, z1 + 0.004)
-    rail(0.0005, 0.085)
+    if z1 - z0 > 0.3:
+        rail(z1 - 0.07, z1 + 0.004)
+        if z0 < 0.05:
+            rail(0.0005, 0.085)
     mb.build('R_レール_' + ob.name, coll, bevel=0.006)
 
 
@@ -981,26 +983,6 @@ def build_conveyor(ob, coll, A):
     # 切替スイッチ
     mb.cyl((fx + 0.023, yb - 0.25, bz - 0.02), (fx + 0.045, yb - 0.25, bz - 0.02), 0.014, st, 12)
     mb.box((fx + 0.052, yb - 0.25, bz - 0.02), (0.014, 0.008, 0.028), M['black_plastic'])
-    # ベルトを横切る治具 (ボルト付きフラットバー + 接種針 4 本)
-    jy = ya + 0.75
-    for s in (-1, 1):
-        mb.box((s * (fx + 0.005), jy, bz + 0.04), (0.02, 0.05, 0.1), M['alu'])
-    mb.box((0, jy, bz + 0.07), (2 * fx + 0.06, 0.03, 0.06), M['alu'])
-    for k in range(4):
-        x = -0.22 + k * 0.147
-        mb.cyl((x, jy - 0.016, bz + 0.07), (x, jy - 0.028, bz + 0.07), 0.013, st, 6)
-        mb.cyl((x, jy - 0.02, bz + 0.03), (x, jy - 0.3, bz + 0.013), 0.012, st, 16)
-        mb.cyl((x, jy - 0.3, bz + 0.013), (x, jy - 0.34, bz + 0.012), 0.012, st, 16, r2=0.001)
-    # ベルト上の工具
-    mb.cyl((-0.22, ya + 0.12, bz), (-0.22, ya + 0.12, bz + 0.15), 0.033, M['spray_red'], 20)
-    mb.cyl((-0.22, ya + 0.12, bz + 0.15), (-0.22, ya + 0.12, bz + 0.19), 0.033, M['black_plastic'], 20)
-    mb.box((0.02, jy - 0.02, bz + 0.004), (0.02, 0.16, 0.006), st)         # スパナ
-    mb.cyl((0.02, jy - 0.1, bz + 0.004), (0.02, jy - 0.1, bz + 0.008), 0.022, st, 6)
-    mb.cyl((0.02, jy + 0.06, bz + 0.004), (0.02, jy + 0.06, bz + 0.008), 0.02, st, 6)
-    mb.cyl((-0.1, jy + 0.4, bz + 0.03), (0.02, jy + 0.4, bz + 0.03), 0.026, M['black_plastic'], 16)
-    mb.box((-0.04, jy + 0.4, bz + 0.03), (0.012, 0.06, 0.07), M['black_plastic'])
-    mb.box((0.15, yb - 0.9, bz + 0.02), (0.07, 0.035, 0.04), M['tape_measure'])   # メジャー
-    mb.box((0.15, yb - 0.9, bz + 0.042), (0.075, 0.03, 0.004), M['white_panel'])
     # 床置きの電源ボックス (オレンジ) + 巻いたコード
     ox, oy = -0.05, 0.25
     mb.box((ox, oy, 0.12), (0.26, 0.4, 0.24), M['orange_box'])
@@ -1423,10 +1405,11 @@ def main():
             thin = min(mx_.x - mn_.x, mx_.y - mn_.y) < 0.2
             on_perimeter = (mx_.y < 0.25 or mn_.y > 15.75) if (mx_.x - mn_.x) > (mx_.y - mn_.y) \
                 else (mx_.x < 0.25 or mn_.x > 11.75)
-            if thin and on_perimeter and (mx_.z - mn_.z) > 1.0 and n not in ('Wall.022',):
-                # 外周 = コンテナの壁 → 台形波板
+            if n not in ('Wall.005', 'Wall.022', 'Wall.018', 'Wall.010', 'Wall.011'):
+                # 外周・仕切りとも コンテナの壁 → 台形波板 (扉・エアシャワーは除く)
                 build_corrugated(ob, real)
-                perimeter_walls.append(ob)
+                if thin and on_perimeter and (mx_.z - mn_.z) > 1.0:
+                    perimeter_walls.append(ob)
                 move(ob, old)
                 continue
             if n in ('Wall.005', 'Wall.022', 'Wall.018'):
