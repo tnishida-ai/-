@@ -135,6 +135,8 @@ def math_node(nt, op, a, b=None):
 
 M = {}
 
+WALL_SCALE = 2.0   # 壁の高さの倍率 (元モデル 1.2m → 2.4m)
+
 
 def build_materials():
     # エポキシ塗床 (クリーンルームでよく使われる明るいグレーグリーン)
@@ -1502,6 +1504,17 @@ def main():
         'box_b': asset_box(assets, '段ボール_小', (0.35, 0.3, 0.25)),
     }
 
+    # 壁の高さを WALL_SCALE 倍にする (床 z=0 基準で上下方向だけ拡大)
+    for ob in bpy.data.objects:
+        if ob.type == 'MESH' and ob.name.split('.')[0] == 'Wall':
+            mw, mi = ob.matrix_world, ob.matrix_world.inverted()
+            for v in ob.data.vertices:
+                w = mw @ v.co
+                w.z *= WALL_SCALE
+                v.co = mi @ w
+            ob.data.update()
+    bpy.context.view_layer.update()   # bound_box を更新
+
     objs = list(bpy.data.objects)
     workers = []
     perimeter_walls = []
@@ -1579,8 +1592,8 @@ def main():
                 mb = MB()
                 for y in (mn.y - 0.02, mx.y + 0.02):
                     x = mx.x - 0.08
-                    mb.box((x, y, 0.5), (0.1, 0.02, 0.02), M['steel'])
-                mb.box_mm((mn.x + 0.1, mn.y - 0.002, 0.6), (mx.x - 0.1, mx.y + 0.002, 0.9), M['glass'])
+                    mb.box((x, y, mx.z * 0.48), (0.1, 0.02, 0.02), M['steel'])
+                mb.box_mm((mn.x + 0.1, mn.y - 0.002, mx.z * 0.57), (mx.x - 0.1, mx.y + 0.002, mx.z * 0.86), M['glass'])
                 mb.build('R_取っ手_' + n, real)
             elif n in ('Wall.010', 'Wall.011'):
                 ob.data.materials.clear(); ob.data.materials.append(M['steel'])
@@ -1597,7 +1610,7 @@ def main():
     if perimeter_walls:
         mb = MB()
         for cx_, cy_ in ((0.075, 0.08), (11.925, 0.08), (0.075, 15.925), (11.925, 15.925)):
-            mb.box((cx_, cy_, 0.6), (0.19, 0.19, 1.204), M['container'])
+            mb.box((cx_, cy_, 0.6 * WALL_SCALE), (0.19, 0.19, 1.2 * WALL_SCALE + 0.004), M['container'])
         mb.build('R_コーナーポスト', real, bevel=0.008)
 
     # 作業者: 近くの作業対象の方を向かせる
