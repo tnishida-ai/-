@@ -142,6 +142,10 @@ SINGLE_DOOR_X = (7.15, 8.05)   # 片開き扉の開口の X 範囲 (観音開き
 SINGLE_DOOR_TOP = 1.95         # 片開き扉の開口上端
 AIR_SHOWER_XY = (10.64, 11.84, 2.595, 3.595)   # エアシャワー外形 (W1200 x D1000)
 AIR_SHOWER_BACK_WALL = 'Wall.009'             # エアシャワー出口側の壁 (作業場との境)
+HANGER_MOVE = {                                # ハンガーラックの移動先 (エアシャワーのある部屋の西側)
+    'ハンガーラック.001': (9.4, 2.45),
+}
+SHOE_BOX_XY = (11.4, 0.34)                     # 靴箱 (入口側の小部屋、南の壁ぎわ)
 STEEL_FLOOR_ROOMS = {                          # 鉄板の床にする部屋 (x0, x1, y0, y1)
     '前室': (9.15, 11.86, 0.16, 3.6),
     '作業室': (6.15, 11.86, 11.0, 15.85),
@@ -1554,7 +1558,7 @@ def build_hanger(ob, coll, A):
     """ハンガーラック + 吊るした防塵服"""
     mn, mx = bounds(ob)
     W, D, H = mx.x - mn.x, mx.y - mn.y, mx.z
-    cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
+    cx, cy = HANGER_MOVE.get(ob.name, ((mn.x + mx.x) / 2, (mn.y + mx.y) / 2))
     mb = MB()
     for y in (-D / 2 + 0.02, D / 2 - 0.02):
         mb.cyl((0, y, 0.03), (0, y, H), 0.012, M['steel'], 10)
@@ -1712,7 +1716,7 @@ def build_extras(coll):
             if random.random() < 0.6:
                 mb.box((x - 0.05, -D / 2 + 0.1, z - 0.06), (0.09, 0.26, 0.07), M['boot'])
                 mb.box((x + 0.05, -D / 2 + 0.1, z - 0.06), (0.09, 0.26, 0.07), M['boot'])
-    mb.build('R_靴箱', coll, bevel=0.004, loc=(11.4, 1.24, 0), rz=math.pi)
+    mb.build('R_靴箱', coll, bevel=0.004, loc=(*SHOE_BOX_XY, 0), rz=math.pi)
 
 
 # ---------------------------------------------------------------------------
