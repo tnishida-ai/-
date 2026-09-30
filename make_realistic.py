@@ -145,7 +145,10 @@ AIR_SHOWER_BACK_WALL = 'Wall.009'             # エアシャワー出口側の�
 HANGER_MOVE = {                                # ハンガーラックの移動先 (エアシャワーのある部屋の西側)
     'ハンガーラック.001': (9.4, 2.45),
 }
-SHOE_BOX_XY = (11.4, 0.34)                     # 靴箱 (入口側の小部屋、南の壁ぎわ)
+SHOE_BOX_XY = (11.685, 0.53)                   # 靴箱 (入口側の小部屋、入って右 = 東の壁に付ける)
+SHOE_BOX_RZ = -math.pi / 2                     # 棚の口を部屋の内側 (西) に向ける
+DOMA = (9.15, 11.48, 0.16, 0.55)               # 土間 (入口の小部屋、入ってすぐ) x0, x1, y0, y1
+DOMA_DEPTH = 0.15                              # 土間の下がり
 STEEL_FLOOR_ROOMS = {                          # 鉄板の床にする部屋 (x0, x1, y0, y1)
     '前室': (9.15, 11.86, 0.16, 3.6),
     '作業室': (6.15, 11.86, 11.0, 15.85),
@@ -433,6 +436,32 @@ def build_materials():
     nt.links.new(map_range(nt, math_node(nt, 'ADD', scratch, dirt), 0.3, 1.2, 0.28, 0.65), b.inputs['Roughness'])
     bump(nt, b, math_node(nt, 'SUBTRACT', math_node(nt, 'MULTIPLY', scratch, 0.2), seam), 0.3, 0.002)
     M['floor_steel'] = mat
+    # 土間のタイル (300 角、グレー、目地)
+    mat, nt, b = new_material('R_土間タイル', (0.42, 0.41, 0.39), 0.6)
+    geo = nt.nodes.new('ShaderNodeNewGeometry')
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(geo.outputs['Position'], sep.inputs[0])
+    masks = []
+    for axis in ('X', 'Y'):
+        f = math_node(nt, 'FRACT', math_node(nt, 'DIVIDE', sep.outputs[axis], 0.3))
+        d = math_node(nt, 'MINIMUM', f, math_node(nt, 'SUBTRACT', 1.0, f))
+        masks.append(map_range(nt, math_node(nt, 'MULTIPLY', d, 0.3), 0.0, 0.004, 1.0, 0.0))
+    grout = math_node(nt, 'MAXIMUM', masks[0], masks[1])
+    speck = ramp(nt, noise(nt, geo.outputs['Position'], 60, 4, 0.6), [(0.35, (0.36, 0.35, 0.33)), (0.65, (0.46, 0.45, 0.43))])
+    mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'
+    nt.links.new(grout, mix.inputs['Factor'])
+    nt.links.new(speck, mix.inputs[6])
+    mix.inputs[7].default_value = (0.2, 0.2, 0.19, 1)
+    nt.links.new(mix.outputs[2], b.inputs['Base Color'])
+    bump(nt, b, math_node(nt, 'SUBTRACT', 1.0, grout), 0.3, 0.003)
+    M['doma_tile'] = mat
+    # 上がり框 (木)
+    mat, nt, b = new_material('R_上がり框', (0.45, 0.28, 0.14), 0.4, coat=0.4)
+    v = tex_coord(nt)
+    grain = noise(nt, v, 6, 6, 0.6, stretch=(0.08, 1, 1))
+    nt.links.new(ramp(nt, grain, [(0.3, (0.32, 0.19, 0.09)), (0.7, (0.55, 0.36, 0.19))]), b.inputs['Base Color'])
+    bump(nt, b, grain, 0.1)
+    M['wood_kamachi'] = mat
     M['plate'] = new_material('R_銘板', (0.45, 0.42, 0.38), 0.4, 0.8)[0]
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
@@ -853,6 +882,42 @@ def build_air_shower(coll, x0, x1, y0, y1):
             mb.box_mm((0.14, yo + s_ * 0.005, ih + 0.11), (0.28, yo + s_ * 0.004, ih + 0.15), M['counter'])
             mb.box_mm((-0.3, yo + s_ * 0.003, ih + 0.11), (-0.1, yo, ih + 0.15), M['white_panel'])
     return mb.build('R_エアシャワー', coll, bevel=0.003, loc=(cx, cy, 0))
+
+
+def rect_minus(r, h):
+    """XY 矩形 r=(x0, x1, y0, y1) から h を抜いた残りを矩形のリストで返す"""
+    x0, x1, y0, y1 = r
+    hx0, hx1, hy0, hy1 = max(h[0], x0), min(h[1], x1), max(h[2], y0), min(h[3], y1)
+    if hx0 >= hx1 or hy0 >= hy1:
+        return [r]
+    out = []
+    if y0 < hy0:
+        out.append((x0, x1, y0, hy0))
+    if hy1 < y1:
+        out.append((x0, x1, hy1, y1))
+    if x0 < hx0:
+        out.append((x0, hx0, hy0, hy1))
+    if hx1 < x1:
+        out.append((hx1, x1, hy0, hy1))
+    return out
+
+
+def build_doma(coll):
+    """住宅の玄関のような土間: 床を DOMA_DEPTH 下げてタイル貼り、奥側に木の上がり框"""
+    x0, x1, y0, y1 = DOMA
+    zb = -DOMA_DEPTH
+    t = 0.01
+    mb = MB()
+    mb.box_mm((x0, y0, zb - 0.02), (x1, y1, zb), M['doma_tile'])                 # 土間のタイル面
+    # 段差の立ち上がり (周囲 3 辺はタイル、奥は上がり框)
+    mb.box_mm((x0 - t, y0 - t, zb - 0.02), (x0, y1 + t, 0.0), M['doma_tile'])
+    mb.box_mm((x1, y0 - t, zb - 0.02), (x1 + t, y1 + t, 0.0), M['doma_tile'])
+    mb.box_mm((x0, y0 - t, zb - 0.02), (x1, y0, 0.0), M['doma_tile'])
+    mb.box_mm((x0, y1, zb - 0.02), (x1, y1 + t, -0.06), M['doma_tile'])
+    mb.build('R_土間', coll)
+    mb = MB()
+    mb.box_mm((x0, y1, -0.06), (x1, y1 + 0.09, 0.012), M['wood_kamachi'])            # 上がり框
+    mb.build('R_上がり框', coll, bevel=0.004)
 
 
 def wall_with_holes(name, coll, x0, x1, y0, y1, z0, z1, holes, mat):
@@ -1464,9 +1529,9 @@ def build_taper(ob, coll, A):
 
 
 RACK_W = 1.8        # ラックの幅 (観音開き扉の開口 2.2m よりひと回り小さく)
-RACK_H = 1.8
+RACK_H = 2.15       # 観音開き扉の開口 (約 2.3m) より少し低く
 RACK_D = 0.8
-RACK_LEVELS = 17
+RACK_LEVELS = 21
 
 
 def asset_tray(root, w, d):
@@ -1706,7 +1771,7 @@ def build_worker(name, coll, loc, face_to, pose='work', height=1.62):
 def build_extras(coll):
     # 靴箱 (前室)
     mb = MB()
-    W, D, H = 0.9, 0.32, 0.9
+    W, D, H = 0.7, 0.32, 0.9
     mb.box((0, 0, H / 2), (W, D, H), M['white_panel'])
     for i in range(3):
         for j in range(4):
@@ -1716,7 +1781,7 @@ def build_extras(coll):
             if random.random() < 0.6:
                 mb.box((x - 0.05, -D / 2 + 0.1, z - 0.06), (0.09, 0.26, 0.07), M['boot'])
                 mb.box((x + 0.05, -D / 2 + 0.1, z - 0.06), (0.09, 0.26, 0.07), M['boot'])
-    mb.build('R_靴箱', coll, bevel=0.004, loc=(*SHOE_BOX_XY, 0), rz=math.pi)
+    mb.build('R_靴箱', coll, bevel=0.004, loc=(*SHOE_BOX_XY, 0), rz=SHOE_BOX_RZ)
 
 
 # ---------------------------------------------------------------------------
@@ -1899,7 +1964,14 @@ def main():
         elif n in ('Floor.002', 'Floor.004', 'Floor.005'):
             move(ob, old)   # 使われていない面
         elif n == 'Floor':
-            ob.data.materials.clear(); ob.data.materials.append(M['floor'])
+            # 床スラブ: 土間の部分を抜いて作り直す
+            fmn, fmx = bounds(ob)
+            hole = (DOMA[0] - 0.01, DOMA[1] + 0.01, DOMA[2] - 0.01, DOMA[3] + 0.01)
+            mb = MB()
+            for (a0, a1, b0, b1) in rect_minus((fmn.x, fmx.x, fmn.y, fmx.y), hole):
+                mb.box_mm((a0, b0, fmn.z), (a1, b1, fmx.z), M['floor'])
+            mb.build('R_床スラブ', real)
+            move(ob, old)
         elif n == 'Floor.001':
             move(ob, old)   # 前室の緑シート → 鉄板の床に置き換え (下で作成)
         elif base == 'Wall':
@@ -1994,10 +2066,13 @@ def main():
         move(o, old)
 
     # 壁で仕切られた部屋 (前室・作業室) の床は鉄板
-    for name, (fx0, fx1, fy0, fy1) in STEEL_FLOOR_ROOMS.items():
+    doma_cut = (DOMA[0] - 0.01, DOMA[1] + 0.01, DOMA[2] - 0.01, DOMA[3] + 0.09)   # 土間 + 上がり框
+    for name, rect in STEEL_FLOOR_ROOMS.items():
         mb = MB()
-        mb.box_mm((fx0, fy0, 0.0), (fx1, fy1, 0.006), M['floor_steel'])
+        for (fx0, fx1, fy0, fy1) in rect_minus(rect, doma_cut):
+            mb.box_mm((fx0, fy0, 0.0), (fx1, fy1, 0.006), M['floor_steel'])
         mb.build('R_鉄板床_' + name, real, bevel=0.002)
+    build_doma(real)
 
     # コンテナの四隅のコーナーポスト
     if perimeter_walls:
