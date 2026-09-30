@@ -137,7 +137,9 @@ M = {}
 
 WALL_SCALE = 2.0   # 壁の高さの倍率 (元モデル 1.2m → 2.4m)
 DOOR_WALL = 'Wall.001'   # コンテナ扉を付ける壁 (北側外周、作業室の棚の後ろ)
-DOOR_X = (9.3, 11.5)     # 観音開き扉の開口の X 範囲 (右寄り)
+CONTAINER_H = 2.65       # コンテナ (外周の波板壁) の高さ
+DOOR_X = (9.25, 11.55)   # 観音開き扉の開口の X 範囲 (幅 2.3m、右寄り)
+DOOR_H = 2.5             # 観音開き扉の開口の高さ
 SINGLE_DOOR_X = (7.15, 8.05)   # 片開き扉の開口の X 範囲 (観音開き扉の左側)
 SINGLE_DOOR_TOP = 1.95         # 片開き扉の開口上端
 AIR_SHOWER_XY = (10.64, 11.84, 2.595, 3.595)   # エアシャワー外形 (W1200 x D1000)
@@ -568,7 +570,7 @@ def shrink_mesh(ob, eps):
                        for i in range(3)])
 
 
-def build_corrugated(ob, coll, gap=None):
+def build_corrugated(ob, coll, gap=None, z_top=None):
     """コンテナの台形波板壁。壁の箱の範囲を、両面とも同じ波形を持つ鋼板で置き換える
 
     gap=(ua, ub) またはそのリストを渡すと、その区間 (長手方向) は波板と上レールを抜く (扉の開口用)。
@@ -578,7 +580,7 @@ def build_corrugated(ob, coll, gap=None):
     along_x = (mx.x - mn.x) >= (mx.y - mn.y)
     u0, u1 = (mn.x, mx.x) if along_x else (mn.y, mx.y)
     t0, t1 = (mn.y, mx.y) if along_x else (mn.x, mx.x)
-    z0, z1 = max(mn.z, 0.0) + 0.001, mx.z
+    z0, z1 = max(mn.z, 0.0) + 0.001, (mx.z if z_top is None else z_top)
     D = 0.036                       # 波の深さ
     seg = (0.10, 0.035, 0.108, 0.035)   # 山の平部 / 斜面 / 谷の平部 / 斜面 (ピッチ 278mm)
     depth_at = (0.0, D, D, 0.0)
@@ -653,7 +655,7 @@ def build_corrugated(ob, coll, gap=None):
     return (u0, u1, t0, t1, z0, z1)
 
 
-def build_container_door(coll, xa, xb, t0, t1, zt):
+def build_container_door(coll, xa, xb, t0, t1, zt, top=None):
     """コンテナの観音開き扉 (X 方向の壁、屋外側 = +Y)。xa..xb が開口、zt が開口上端
 
     内側: 白い扉、横方向の波、縦框、上下の横板とボルト頭
@@ -666,7 +668,7 @@ def build_container_door(coll, xa, xb, t0, t1, zt):
     # 縦枠・ヘッダー (壁面より 4mm 出す)
     for xa_, xb_ in ((xa - fw, xa), (xb, xb + fw)):
         mb.box_mm((xa_, t0 - 0.016, zb), (xb_, t1 + 0.016, zt), cm)
-    top = zt + 0.104
+    top = zt + 0.104 if top is None else top
     mb.box_mm((xa - fw, t0 - 0.016, zt), (xb + fw, t1 + 0.016, top), cm)
     # 注意ステッカー (外側ヘッダー)
     for x in (xa + 0.15, xb - 0.45):
@@ -1993,11 +1995,11 @@ def main():
                     xa, xb = DOOR_X
                     sa, sb = SINGLE_DOOR_X
                     u0, u1, t0, t1, z0, z1 = build_corrugated(
-                        ob, real, gap=[(xa - 0.05, xb + 0.05), (sa - 0.05, sb + 0.05)])
-                    build_container_door(real, xa, xb, t0, t1, z1 - 0.104)
+                        ob, real, gap=[(xa - 0.05, xb + 0.05), (sa - 0.05, sb + 0.05)], z_top=CONTAINER_H)
+                    build_container_door(real, xa, xb, t0, t1, 0.085 + DOOR_H, top=z1 + 0.004)
                     build_single_door(real, sa, sb, t0, t1, SINGLE_DOOR_TOP, z1 + 0.004)
                 else:
-                    build_corrugated(ob, real)
+                    build_corrugated(ob, real, z_top=CONTAINER_H)
                 perimeter_walls.append(ob)
                 move(ob, old)
                 continue
@@ -2078,7 +2080,7 @@ def main():
     if perimeter_walls:
         mb = MB()
         for cx_, cy_ in ((0.075, 0.08), (11.925, 0.08), (0.075, 15.925), (11.925, 15.925)):
-            mb.box((cx_, cy_, 0.6 * WALL_SCALE), (0.19, 0.19, 1.2 * WALL_SCALE + 0.004), M['container'])
+            mb.box((cx_, cy_, CONTAINER_H / 2), (0.19, 0.19, CONTAINER_H + 0.004), M['container'])
         mb.build('R_コーナーポスト', real, bevel=0.008)
 
     # 作業者: 近くの作業対象の方を向かせる
