@@ -455,10 +455,9 @@ def build_materials():
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
-def build_kinbou_materials():
-    """菌棒 (袋入りのおが粉培地に菌糸がまわったもの) 用のマテリアル"""
-    # 中身: 白い菌糸に、おが粉の茶色い粒と、菌糸の薄い灰色のムラが透ける
-    mat, nt, b = new_material('R_菌棒', (0.66, 0.65, 0.62), 0.8, sss=0.05)
+def substrate_material(name, base_stops, speck_stops, fine_thr, flake_thr):
+    """袋越しに見えるおが粉培地: 大きなムラの地色に、細かい粒と大きめのかけらが散る"""
+    mat, nt, b = new_material(name, base_stops[1][1], 0.8, sss=0.05)
     tc = nt.nodes.new('ShaderNodeTexCoord')
     oi = nt.nodes.new('ShaderNodeObjectInfo')
     off = nt.nodes.new('ShaderNodeVectorMath'); off.operation = 'MULTIPLY_ADD'
@@ -469,18 +468,29 @@ def build_kinbou_materials():
     nt.links.new(tc.outputs['Object'], off.inputs[0])
     nt.links.new(comb.outputs[0], off.inputs[2])
     v = off.outputs[0]
-    base = ramp(nt, noise(nt, v, 7, 5, 0.65), [(0.38, (0.3, 0.32, 0.35)), (0.5, (0.46, 0.47, 0.48)),
-                                               (0.62, (0.6, 0.6, 0.58))])
-    fine = ramp(nt, noise(nt, v, 220, 3, 0.65), [(0.58, (0, 0, 0)), (0.63, (1, 1, 1))])
-    flake = ramp(nt, noise(nt, v, 55, 4, 0.7), [(0.62, (0, 0, 0)), (0.68, (1, 1, 1))])
+    base = ramp(nt, noise(nt, v, 7, 5, 0.65), base_stops)
+    fine = ramp(nt, noise(nt, v, 220, 3, 0.65), [(fine_thr, (0, 0, 0)), (fine_thr + 0.05, (1, 1, 1))])
+    flake = ramp(nt, noise(nt, v, 55, 4, 0.7), [(flake_thr, (0, 0, 0)), (flake_thr + 0.06, (1, 1, 1))])
     dots = math_node(nt, 'MAXIMUM', fine, flake)
-    brown = ramp(nt, noise(nt, v, 60, 3, 0.6), [(0.3, (0.1, 0.055, 0.04)), (0.7, (0.24, 0.13, 0.08))])
+    speck = ramp(nt, noise(nt, v, 60, 3, 0.6), speck_stops)
     mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'
     nt.links.new(dots, mix.inputs['Factor'])
-    nt.links.new(base, mix.inputs[6]); nt.links.new(brown, mix.inputs[7])
+    nt.links.new(base, mix.inputs[6]); nt.links.new(speck, mix.inputs[7])
     nt.links.new(mix.outputs[2], b.inputs['Base Color'])
     bump(nt, b, math_node(nt, 'ADD', noise(nt, v, 80, 4, 0.6), math_node(nt, 'MULTIPLY', dots, 0.5)), 0.35, 0.003)
-    M['kinbou'] = mat
+    return mat
+
+
+def build_kinbou_materials():
+    """菌棒 (袋入りのおが粉培地に菌糸がまわったもの) 用のマテリアル"""
+    # 中身: 白い菌糸に、おが粉の茶色い粒と、菌糸の薄い灰色のムラが透ける
+    M['kinbou'] = substrate_material(
+        'R_菌棒', [(0.38, (0.3, 0.32, 0.35)), (0.5, (0.46, 0.47, 0.48)), (0.62, (0.6, 0.6, 0.58))],
+        [(0.3, (0.1, 0.055, 0.04)), (0.7, (0.24, 0.13, 0.08))], 0.58, 0.62)
+    # パレット積みの菌棒 (接種前): 青みがかった灰色に、黒っぽいおが粉の粒が密に見える
+    M['kinbou_raw'] = substrate_material(
+        'R_菌棒_接種前', [(0.35, (0.24, 0.26, 0.31)), (0.5, (0.38, 0.4, 0.46)), (0.65, (0.56, 0.57, 0.6))],
+        [(0.3, (0.04, 0.035, 0.04)), (0.7, (0.14, 0.1, 0.09))], 0.55, 0.6)
 
     # 袋のフィルム: 透明 + 映り込み、細かいシワ
     mat, nt, b = new_material('R_菌棒フィルム', (0.2, 0.2, 0.2), 0.1, spec=0.8)
@@ -1079,23 +1089,24 @@ KINBOU_L = 0.52    # 菌棒の長さ (袋の口の結束を除く)
 KINBOU_TIE = 0.026  # 両端の結束の飛び出し
 
 
-def asset_kinbou(root):
+def asset_kinbou(root, name='菌棒', fill='kinbou', plugs=True):
     """袋入りの菌棒 (横倒し、軸は X、軸の高さ z=0)
 
     白い菌糸がまわったおが粉培地を透明の袋に詰めたもの。接種穴の種菌 (茶色) が 3 列並び、
     上からフィルムで覆ってある。表面には白いマスキングテープを 1 枚貼る。袋の両端は絞って白く結束する。
+    plugs=False は接種前の菌棒 (種菌の穴なし)。
     """
-    c = make_asset_collection('_A_菌棒', root)
+    c = make_asset_collection('_A_' + name, root)
     rng = random.Random(26)   # 他の設備の乱数列を変えないよう専用の乱数を使う
     mb = MB()
     r, L = KINBOU_R, KINBOU_L
     # 中身 (端は少し丸める)
-    mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), r, M['kinbou'], 40)
+    mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), r, M[fill], 40)
     for sx in (-1, 1):
-        mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.02, r, r), M['kinbou'], 40, 12)
+        mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.02, r, r), M[fill], 40, 12)
     # 接種穴の種菌: 3 列 (上から 75°, -75°, 180°)。4 個と 3 個の列を交互にして千鳥にする
     hr, pitch = 0.022, 0.125
-    for ang, n in ((math.radians(75), 4), (math.radians(-75), 3), (math.pi, 4)):
+    for ang, n in ((math.radians(75), 4), (math.radians(-75), 3), (math.pi, 4)) if plugs else ():
         d = Vector((0, -math.sin(ang), math.cos(ang)))
         for k in range(n):
             x = (k - (n - 1) / 2) * pitch
@@ -1112,7 +1123,7 @@ def asset_kinbou(root):
         mb.sphere((sx * (L / 2 + 0.008), 0.006, 0.008), (0.012, 0.016, 0.014), M['tie'], 12, 8)
     # マスキングテープ (袋の上に貼る)
     mb.cyl_patch(0.02, 0.07, fr + 0.0006, math.radians(-14), math.radians(28), M['masking'])
-    mb.build('菌棒', c)
+    mb.build(name, c)
     return c
 
 
@@ -1120,7 +1131,7 @@ PALLET_LAYERS = 16     # 菌棒の段数 (パレット込みで高さ約 2m)
 
 
 def asset_pallet_load(root, kinbou):
-    """パレットに積んだ菌棒: 1 段 3 本 x 12 列を、段ごとに向きを 90° 変えて積み、ストレッチフィルムで巻く"""
+    """パレットに積んだ接種前の菌棒: 1 段 3 本 x 12 列を、段ごとに向きを 90° 変えて積み、ストレッチフィルムで巻く"""
     c = make_asset_collection('_A_菌棒パレット積み', root)
     rng = random.Random(1500)
     r = KINBOU_R
@@ -2159,12 +2170,13 @@ def main():
 
     A = {
         'kinbou': asset_kinbou(assets),
+        'kinbou_raw': asset_kinbou(assets, '菌棒_接種前', 'kinbou_raw', plugs=False),
         'pallet': asset_pallet(assets),
         'seed': asset_seed_stack(assets),
         'box_a': asset_box(assets, '段ボール_大', (0.45, 0.4, 0.32)),
         'box_b': asset_box(assets, '段ボール_小', (0.35, 0.3, 0.25)),
     }
-    A['pallet_load'] = asset_pallet_load(assets, A['kinbou'])
+    A['pallet_load'] = asset_pallet_load(assets, A['kinbou_raw'])
 
     # 壁の高さを WALL_SCALE 倍にする (床 z=0 基準で上下方向だけ拡大)
     for ob in bpy.data.objects:
