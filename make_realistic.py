@@ -259,15 +259,6 @@ def build_materials():
     bump(nt, b, map_range(nt, vor.outputs['Distance'], 0.0, 0.3, 1.0, 0.0), 0.25, 0.002)
     M['pallet'] = mat
 
-    # 培養ビン用コンテナ (紺)
-    M['crate'] = new_material('R_コンテナ', (0.03, 0.06, 0.16), 0.45)[0]
-    # PP 培養ビン (半透明)
-    M['bottle'] = new_material('R_培養ビン', (0.85, 0.83, 0.75), 0.25, sss=0.3, transmission=0.3)[0]
-    # ビンのキャップ
-    M['cap'] = new_material('R_キャップ', (0.92, 0.92, 0.9), 0.4)[0]
-    # フィルター部 (キャップ中央)
-    M['filter'] = new_material('R_フィルター', (0.75, 0.72, 0.62), 0.9)[0]
-
     # 種菌 (おが粉培地)
     mat, nt, b = new_material('R_種菌', (0.33, 0.2, 0.09), 0.95)
     v = tex_coord(nt)
@@ -354,6 +345,7 @@ def build_materials():
     M['yellow'] = new_material('R_非常停止箱', (0.95, 0.65, 0.05), 0.4)[0]
     M['counter'] = new_material('R_カウンター', (0.02, 0.02, 0.02), 0.2, emission=((0.9, 0.95, 1.0), 4.0))[0]
     M['bag'] = new_material('R_菌床袋', (0.75, 0.62, 0.42), 0.15, transmission=0.3, sss=0.3)[0]
+    build_kinbou_materials()
     # ベルトコンベヤまわり
     mat, nt, b = new_material('R_PVCベルト_緑', (0.02, 0.3, 0.17), 0.3, coat=0.2)
     v = tex_coord(nt)
@@ -468,6 +460,63 @@ def build_materials():
     M['line_paint'] = new_material('R_区画線', (0.8, 0.8, 0.78), 0.7)[0]
 
 
+def build_kinbou_materials():
+    """菌棒 (袋入りのおが粉培地に菌糸がまわったもの) 用のマテリアル"""
+    # 中身: 白い菌糸に、おが粉の茶色い粒と、菌糸の薄い灰色のムラが透ける
+    mat, nt, b = new_material('R_菌棒', (0.66, 0.65, 0.62), 0.8, sss=0.05)
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    oi = nt.nodes.new('ShaderNodeObjectInfo')
+    off = nt.nodes.new('ShaderNodeVectorMath'); off.operation = 'MULTIPLY_ADD'
+    off.inputs[1].default_value = (1.0, 1.0, 1.0)
+    comb = nt.nodes.new('ShaderNodeCombineXYZ')
+    for i, k in enumerate((17.0, 11.0, 5.0)):
+        nt.links.new(math_node(nt, 'MULTIPLY', oi.outputs['Random'], k), comb.inputs[i])
+    nt.links.new(tc.outputs['Object'], off.inputs[0])
+    nt.links.new(comb.outputs[0], off.inputs[2])
+    v = off.outputs[0]
+    base = ramp(nt, noise(nt, v, 7, 5, 0.65), [(0.38, (0.3, 0.32, 0.35)), (0.5, (0.46, 0.47, 0.48)),
+                                               (0.62, (0.6, 0.6, 0.58))])
+    fine = ramp(nt, noise(nt, v, 220, 3, 0.65), [(0.58, (0, 0, 0)), (0.63, (1, 1, 1))])
+    flake = ramp(nt, noise(nt, v, 55, 4, 0.7), [(0.62, (0, 0, 0)), (0.68, (1, 1, 1))])
+    dots = math_node(nt, 'MAXIMUM', fine, flake)
+    brown = ramp(nt, noise(nt, v, 60, 3, 0.6), [(0.3, (0.1, 0.055, 0.04)), (0.7, (0.24, 0.13, 0.08))])
+    mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'
+    nt.links.new(dots, mix.inputs['Factor'])
+    nt.links.new(base, mix.inputs[6]); nt.links.new(brown, mix.inputs[7])
+    nt.links.new(mix.outputs[2], b.inputs['Base Color'])
+    bump(nt, b, math_node(nt, 'ADD', noise(nt, v, 80, 4, 0.6), math_node(nt, 'MULTIPLY', dots, 0.5)), 0.35, 0.003)
+    M['kinbou'] = mat
+
+    # 袋のフィルム: 透明 + 映り込み、細かいシワ
+    mat, nt, b = new_material('R_菌棒フィルム', (0.2, 0.2, 0.2), 0.1, spec=0.8)
+    out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+    tr = nt.nodes.new('ShaderNodeBsdfTransparent')
+    lw = nt.nodes.new('ShaderNodeLayerWeight'); lw.inputs['Blend'].default_value = 0.3
+    ms = nt.nodes.new('ShaderNodeMixShader')
+    nt.links.new(map_range(nt, lw.outputs['Fresnel'], 0.0, 1.0, 0.12, 0.75), ms.inputs['Fac'])
+    nt.links.new(tr.outputs[0], ms.inputs[1])
+    nt.links.new(b.outputs[0], ms.inputs[2])
+    nt.links.new(ms.outputs[0], out.inputs['Surface'])
+    v = tex_coord(nt)
+    bump(nt, b, noise(nt, v, 14, 4, 0.6, stretch=(0.35, 1.0, 1.0)), 0.25, 0.004)
+    M['film'] = mat
+
+    # 接種穴の種菌 (粒の粗い茶色のおが粉)
+    mat, nt, b = new_material('R_菌棒_種菌', (0.3, 0.17, 0.08), 0.95)
+    v = tex_coord(nt)
+    n = noise(nt, v, 260, 4, 0.75)
+    nt.links.new(ramp(nt, n, [(0.3, (0.07, 0.035, 0.018)), (0.55, (0.2, 0.1, 0.045)), (0.78, (0.38, 0.22, 0.1))]),
+                 b.inputs['Base Color'])
+    bump(nt, b, n, 0.9, 0.003)
+    M['kinbou_spawn'] = mat
+
+    # マスキングテープ (紙・クレープ)
+    mat, nt, b = new_material('R_マスキングテープ', (0.86, 0.85, 0.74), 0.85)
+    v = tex_coord(nt)
+    bump(nt, b, noise(nt, v, 300, 3, 0.6, stretch=(3.0, 0.4, 1.0)), 0.15, 0.002)
+    M['masking'] = mat
+
+
 # ---------------------------------------------------------------------------
 # メッシュビルダー (複数のパーツを 1 メッシュにまとめる)
 # ---------------------------------------------------------------------------
@@ -535,6 +584,19 @@ class MB:
                 q = (vs[i * rsegs + j], vs[((i + 1) % segs) * rsegs + j],
                      vs[((i + 1) % segs) * rsegs + (j + 1) % rsegs], vs[i * rsegs + (j + 1) % rsegs])
                 f = self.bm.faces.new(q)
+                f.material_index = idx
+                f.smooth = True
+
+    def cyl_patch(self, x0, x1, r, a0, a1, mat, nx=4, na=6):
+        """X 軸まわりの円筒面の一部 (貼ったテープ等)。a は +Z からの角度"""
+        vs = [[self.bm.verts.new((x0 + (x1 - x0) * i / nx,
+                                  -r * math.sin(a0 + (a1 - a0) * j / na),
+                                  r * math.cos(a0 + (a1 - a0) * j / na)))
+               for j in range(na + 1)] for i in range(nx + 1)]
+        idx = self._mi(mat)
+        for i in range(nx):
+            for j in range(na):
+                f = self.bm.faces.new((vs[i][j], vs[i + 1][j], vs[i + 1][j + 1], vs[i][j + 1]))
                 f.material_index = idx
                 f.smooth = True
 
@@ -966,33 +1028,43 @@ def make_asset_collection(name, root):
     return c
 
 
-CRATE = 0.36     # 培養ビンコンテナの一辺
-CRATE_H = 0.19   # 段積みピッチ
 PALLET_H = 0.15
 
 
-def asset_crate(root):
-    """16 本入り培養ビンコンテナ"""
-    c = make_asset_collection('_A_培養ビンコンテナ', root)
+KINBOU_R = 0.06    # 菌棒の半径 (直径 12cm)
+KINBOU_L = 0.52    # 菌棒の長さ
+
+
+def asset_kinbou(root):
+    """袋入りの菌棒 (横倒し、軸は X、軸の高さ z=0)
+
+    白い菌糸がまわったおが粉培地を透明の袋に詰めたもの。接種穴の種菌 (茶色) が 3 列並び、
+    上からフィルムで覆ってある。表面には白いマスキングテープを 1 枚貼る。
+    """
+    c = make_asset_collection('_A_菌棒', root)
+    rng = random.Random(26)   # 他の設備の乱数列を変えないよう専用の乱数を使う
     mb = MB()
-    s, h, t = CRATE, 0.14, 0.012
-    mb.box((0, 0, 0.006), (s - 0.01, s - 0.01, 0.012), M['crate'])
-    for sx, sy, w, d in ((1, 0, t, s), (-1, 0, t, s), (0, 1, s, t), (0, -1, s, t)):
-        x = sx * (s / 2 - t / 2)
-        y = sy * (s / 2 - t / 2)
-        mb.box((x, y, h / 2), (w, d, h), M['crate'])
-        # 取っ手の窓
-        if sx:
-            mb.box((x * 1.001, y, h - 0.03), (t * 1.2, 0.1, 0.025), M['black_plastic'])
-    step = 0.085
-    for i in range(4):
-        for j in range(4):
-            x = (i - 1.5) * step
-            y = (j - 1.5) * step
-            mb.cyl((x, y, 0.012), (x, y, 0.15), 0.036, M['bottle'], 14)
-            mb.cyl((x, y, 0.15), (x, y, 0.172), 0.039, M['cap'], 14)
-            mb.cyl((x, y, 0.172), (x, y, 0.1735), 0.018, M['filter'], 10)
-    mb.build('培養ビンコンテナ', c)
+    r, L = KINBOU_R, KINBOU_L
+    # 中身 (端は少し丸める)
+    mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), r, M['kinbou'], 40)
+    for sx in (-1, 1):
+        mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.02, r, r), M['kinbou'], 40, 12)
+    # 接種穴の種菌: 3 列 (上から 75°, -75°, 180°)。4 個と 3 個の列を交互にして千鳥にする
+    hr, pitch = 0.022, 0.125
+    for ang, n in ((math.radians(75), 4), (math.radians(-75), 3), (math.pi, 4)):
+        d = Vector((0, -math.sin(ang), math.cos(ang)))
+        for k in range(n):
+            x = (k - (n - 1) / 2) * pitch
+            mb.cyl(Vector((x, 0, 0)) + d * (r - 0.012), Vector((x, 0, 0)) + d * (r + 0.0012),
+                   hr * rng.uniform(0.9, 1.1), M['kinbou_spawn'], 20)
+    # 袋 (透明フィルム)。端は中身に沿って丸く折り込む
+    fr = r + 0.003
+    mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), fr, M['film'], 40)
+    for sx in (-1, 1):
+        mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.023, fr, fr), M['film'], 40, 12)
+    # マスキングテープ (袋の上に貼る)
+    mb.cyl_patch(0.02, 0.07, fr + 0.0006, math.radians(-14), math.radians(28), M['masking'])
+    mb.build('菌棒', c)
     return c
 
 
@@ -1770,6 +1842,33 @@ def build_worker(name, coll, loc, face_to, pose='work', height=1.62):
 # 追加設備 (ラベルのみだった靴箱。建物の外側は元のまま変更しない)
 # ---------------------------------------------------------------------------
 
+KINBOU_ON_TABLE = (   # (台, 並べる中心の Y オフセット, 本数)
+    ('台', 0.55, 8),
+    ('台.002', -0.45, 8),
+    ('台.003', 0.3, 5),
+)
+
+
+def place_kinbou(coll, A):
+    r = KINBOU_R
+    rng = random.Random(926)
+    for _ in range(3):
+        random.random()   # 以前ここで置いていた培養ビンコンテナと同じだけ乱数を進める (後続の配置を変えない)
+    for n, oy, count in KINBOU_ON_TABLE:
+        ob = bpy.data.objects.get(n)
+        if ob is None:
+            continue
+        mn, mx = bounds(ob)
+        cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2 + oy
+        pitch = 2 * r + 0.012
+        for k in range(count):
+            y = cy + (k - (count - 1) / 2) * pitch + rng.uniform(-0.003, 0.003)
+            e = instance(A['kinbou'], f'菌棒_{n}_{k + 1:02d}', coll,
+                         (cx + rng.uniform(-0.02, 0.02), y, mx.z + r + 0.001))
+            # 転がす向き (どの面が上か) と、わずかな置きずれ
+            e.rotation_euler = (rng.uniform(-0.7, 0.7), 0.0, math.radians(rng.uniform(-3, 3)))
+
+
 def build_extras(coll):
     # 靴箱 (前室)
     mb = MB()
@@ -1905,7 +2004,7 @@ def main():
         dst.objects.link(ob)
 
     A = {
-        'crate': asset_crate(assets),
+        'kinbou': asset_kinbou(assets),
         'pallet': asset_pallet(assets),
         'seed': asset_seed_stack(assets),
         'box_a': asset_box(assets, '段ボール_大', (0.45, 0.4, 0.32)),
@@ -2098,13 +2197,8 @@ def main():
         build_worker(f'作業者_{k + 1:02d}', real, pos, best[1], best[2],
                      height=random.uniform(1.58, 1.7))
 
-    # 作業台の上の小物
-    for n, off in (('台', (0, 0.6)), ('台.002', (0, -0.5)), ('台.003', (0, 0.3))):
-        ob = bpy.data.objects.get(n)
-        if ob:
-            mn, mx = bounds(ob)
-            instance(A['crate'], 'コンテナ', real,
-                     ((mn.x + mx.x) / 2 + off[0], (mn.y + mx.y) / 2 + off[1], mx.z), math.radians(random.uniform(-5, 5)))
+    # 作業台の上の菌棒 (横倒しで、長手を台の奥行き方向にそろえて並べる)
+    place_kinbou(real, A)
 
     build_extras(real)
 
