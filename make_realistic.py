@@ -340,6 +340,7 @@ def build_materials():
     M['bag'] = new_material('R_菌床袋', (0.75, 0.62, 0.42), 0.15, transmission=0.3, sss=0.3)[0]
     build_kinbou_materials()
     build_spawn_bag_materials()
+    build_stretch_film_material()
     # ベルトコンベヤまわり
     mat, nt, b = new_material('R_PVCベルト_緑', (0.02, 0.3, 0.17), 0.3, coat=0.2)
     v = tex_coord(nt)
@@ -504,6 +505,32 @@ def build_kinbou_materials():
     bump(nt, b, n, 0.9, 0.003)
     M['kinbou_spawn'] = mat
 
+    # マスキングテープ (紙・クレープ)
+    mat, nt, b = new_material('R_マスキングテープ', (0.86, 0.85, 0.74), 0.85)
+    v = tex_coord(nt)
+    bump(nt, b, noise(nt, v, 300, 3, 0.6, stretch=(3.0, 0.4, 1.0)), 0.15, 0.002)
+    M['masking'] = mat
+    M['tie'] = new_material('R_結束', (0.88, 0.88, 0.86), 0.45, sss=0.15, transmission=0.2)[0]
+
+
+def build_stretch_film_material():
+    """パレット巻きのストレッチフィルム: 透明 + 映り込み、横方向の伸びじわと白い曇り"""
+    mat, nt, b = new_material('R_ストレッチフィルム', (0.85, 0.85, 0.85), 0.08, spec=0.9)
+    out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+    tr = nt.nodes.new('ShaderNodeBsdfTransparent')
+    lw = nt.nodes.new('ShaderNodeLayerWeight'); lw.inputs['Blend'].default_value = 0.35
+    v = tex_coord(nt)
+    haze = noise(nt, v, 3, 4, 0.6, stretch=(1.0, 1.0, 4.0))
+    fac = math_node(nt, 'ADD', map_range(nt, lw.outputs['Fresnel'], 0.0, 1.0, 0.04, 0.6),
+                    map_range(nt, haze, 0.5, 0.75, 0.0, 0.25))
+    ms = nt.nodes.new('ShaderNodeMixShader')
+    nt.links.new(math_node(nt, 'MINIMUM', fac, 0.85), ms.inputs['Fac'])
+    nt.links.new(tr.outputs[0], ms.inputs[1])
+    nt.links.new(b.outputs[0], ms.inputs[2])
+    nt.links.new(ms.outputs[0], out.inputs['Surface'])
+    bump(nt, b, noise(nt, v, 9, 5, 0.65, stretch=(0.25, 0.25, 6.0)), 0.5, 0.006)
+    M['stretch'] = mat
+
 
 def build_spawn_bag_materials():
     # 袋入りの種菌: 茶色のおが粉に、白い菌糸のかたまりと小さな白い粒
@@ -531,12 +558,6 @@ def build_spawn_bag_materials():
     M['spawn_bag'] = mat
     M['cap_white'] = new_material('R_キャップ_白', (0.92, 0.92, 0.9), 0.35, sss=0.1)[0]
     M['cap_pink'] = new_material('R_キャップ_綿栓', (0.9, 0.6, 0.65), 0.8)[0]
-
-    # マスキングテープ (紙・クレープ)
-    mat, nt, b = new_material('R_マスキングテープ', (0.86, 0.85, 0.74), 0.85)
-    v = tex_coord(nt)
-    bump(nt, b, noise(nt, v, 300, 3, 0.6, stretch=(3.0, 0.4, 1.0)), 0.15, 0.002)
-    M['masking'] = mat
 
 
 # ---------------------------------------------------------------------------
@@ -1054,14 +1075,15 @@ PALLET_H = 0.15
 
 
 KINBOU_R = 0.06    # 菌棒の半径 (直径 12cm)
-KINBOU_L = 0.52    # 菌棒の長さ
+KINBOU_L = 0.52    # 菌棒の長さ (袋の口の結束を除く)
+KINBOU_TIE = 0.026  # 両端の結束の飛び出し
 
 
 def asset_kinbou(root):
     """袋入りの菌棒 (横倒し、軸は X、軸の高さ z=0)
 
     白い菌糸がまわったおが粉培地を透明の袋に詰めたもの。接種穴の種菌 (茶色) が 3 列並び、
-    上からフィルムで覆ってある。表面には白いマスキングテープを 1 枚貼る。
+    上からフィルムで覆ってある。表面には白いマスキングテープを 1 枚貼る。袋の両端は絞って白く結束する。
     """
     c = make_asset_collection('_A_菌棒', root)
     rng = random.Random(26)   # 他の設備の乱数列を変えないよう専用の乱数を使う
@@ -1084,9 +1106,74 @@ def asset_kinbou(root):
     mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), fr, M['film'], 40)
     for sx in (-1, 1):
         mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.023, fr, fr), M['film'], 40, 12)
+        # 絞った口と結束 (白く丸まった袋の余り)
+        mb.cyl((sx * (L / 2 - 0.004), 0, 0), (sx * (L / 2 + 0.01), 0, 0), 0.026, M['film'], 16, r2=0.012, caps=False)
+        mb.sphere((sx * (L / 2 + 0.012), 0, 0), (0.014, 0.022, 0.02), M['tie'], 16, 10)
+        mb.sphere((sx * (L / 2 + 0.008), 0.006, 0.008), (0.012, 0.016, 0.014), M['tie'], 12, 8)
     # マスキングテープ (袋の上に貼る)
     mb.cyl_patch(0.02, 0.07, fr + 0.0006, math.radians(-14), math.radians(28), M['masking'])
     mb.build('菌棒', c)
+    return c
+
+
+PALLET_LAYERS = 16     # 菌棒の段数 (パレット込みで高さ約 2m)
+
+
+def asset_pallet_load(root, kinbou):
+    """パレットに積んだ菌棒: 1 段 3 本 x 12 列を、段ごとに向きを 90° 変えて積み、ストレッチフィルムで巻く"""
+    c = make_asset_collection('_A_菌棒パレット積み', root)
+    rng = random.Random(1500)
+    r = KINBOU_R
+    along = KINBOU_L + 0.01                 # 長手方向のピッチ (端の結束は隣とかみ合う)
+    across = 2 * r + 0.002
+    lay = 2 * r - 0.004                     # 段のピッチ (重みで少しつぶれる)
+    n_across = 12
+    for k in range(PALLET_LAYERS):
+        z = PALLET_H + r + k * lay
+        for i in range(3):
+            for j in range(n_across):
+                u = (i - 1) * along + rng.uniform(-0.01, 0.01)
+                w = (j - (n_across - 1) / 2) * across + rng.uniform(-0.002, 0.002)
+                x, y, rz = (u, w, 0.0) if k % 2 == 0 else (w, u, math.pi / 2)
+                e = instance(kinbou, f'菌棒_積み_{k:02d}_{i}_{j:02d}', c, (x, y, z))
+                e.rotation_euler = (rng.uniform(-math.pi, math.pi), 0.0, rz + rng.uniform(-0.02, 0.02))
+    # ストレッチフィルム: 角を丸めた筒を、段の境目で少しくびれさせる
+    half = (2 * along + KINBOU_L + 2 * KINBOU_TIE) / 2 + 0.006
+    cr = 0.07
+    z0, z1 = PALLET_H - 0.06, PALLET_H + PALLET_LAYERS * lay + 0.012
+    ring = []
+    for q in range(4):
+        cx_ = (half - cr) * (1 if q in (0, 3) else -1)
+        cy_ = (half - cr) * (1 if q in (0, 1) else -1)
+        for t in range(7):
+            a = math.pi / 2 * q + math.pi / 2 * t / 6
+            ring.append((cx_ + cr * math.cos(a), cy_ + cr * math.sin(a), math.cos(a), math.sin(a)))
+    zs = [z0, PALLET_H]
+    zz = PALLET_H
+    while zz < z1 - 1e-6:
+        zs += [zz + lay / 2, min(zz + lay, z1)]
+        zz += lay
+    bm = bmesh.new()
+    rows = []
+    for zi, z in enumerate(zs):
+        seam = zi >= 1 and (zi - 1) % 2 == 0 and z < z1 - 1e-6
+        d = -0.01 if seam else 0.0
+        rows.append([bm.verts.new((x + nx * d + rng.uniform(-0.003, 0.003), y + ny * d + rng.uniform(-0.003, 0.003), z))
+                     for x, y, nx, ny in ring])
+    n = len(ring)
+    for a, b in zip(rows, rows[1:]):
+        for i in range(n):
+            bm.faces.new((a[i], a[(i + 1) % n], b[(i + 1) % n], b[i]))
+    top = [bm.verts.new((x * 0.97, y * 0.97, z1 + 0.012)) for x, y, nx, ny in ring]
+    for i in range(n):
+        bm.faces.new((rows[-1][i], rows[-1][(i + 1) % n], top[(i + 1) % n], top[i]))
+    bm.faces.new(top)
+    for f in bm.faces:
+        f.smooth = True
+    me = bpy.data.meshes.new('ストレッチフィルム')
+    bm.to_mesh(me); bm.free()
+    me.materials.append(M['stretch'])
+    c.objects.link(bpy.data.objects.new('ストレッチフィルム', me))
     return c
 
 
@@ -1216,7 +1303,9 @@ def build_pallet(ob, coll, A):
     cx, cy = (mn.x + mx.x) / 2, (mn.y + mx.y) / 2
     rz = math.radians(random.uniform(-1.5, 1.5))
     instance(A['pallet'], 'R_' + ob.name, coll, (cx, cy, 0), rz)
-    # パレットの上には何も載せない
+    # 菌棒を積んでフィルムで巻いた荷 (向きはパレットごとに 90° 単位で変える)
+    turn = random.Random(ob.name).randrange(4) * math.pi / 2
+    instance(A['pallet_load'], '荷_' + ob.name, coll, (cx, cy, 0), rz + turn)
 
 
 def build_seed(ob, coll, A):
@@ -2075,6 +2164,7 @@ def main():
         'box_a': asset_box(assets, '段ボール_大', (0.45, 0.4, 0.32)),
         'box_b': asset_box(assets, '段ボール_小', (0.35, 0.3, 0.25)),
     }
+    A['pallet_load'] = asset_pallet_load(assets, A['kinbou'])
 
     # 壁の高さを WALL_SCALE 倍にする (床 z=0 基準で上下方向だけ拡大)
     for ob in bpy.data.objects:
