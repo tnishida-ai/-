@@ -259,13 +259,6 @@ def build_materials():
     bump(nt, b, map_range(nt, vor.outputs['Distance'], 0.0, 0.3, 1.0, 0.0), 0.25, 0.002)
     M['pallet'] = mat
 
-    # 種菌 (おが粉培地)
-    mat, nt, b = new_material('R_種菌', (0.33, 0.2, 0.09), 0.95)
-    v = tex_coord(nt)
-    n = noise(nt, v, 120, 6, 0.7)
-    nt.links.new(ramp(nt, n, [(0.3, (0.22, 0.12, 0.05)), (0.55, (0.38, 0.24, 0.11)), (0.8, (0.55, 0.42, 0.25))]), b.inputs['Base Color'])
-    bump(nt, b, n, 0.6, 0.005)
-    M['spawn'] = mat
     M['tray'] = new_material('R_トレー樹脂', (0.82, 0.8, 0.72), 0.35, sss=0.2, transmission=0.4)[0]
 
     # 段ボール
@@ -346,6 +339,7 @@ def build_materials():
     M['counter'] = new_material('R_カウンター', (0.02, 0.02, 0.02), 0.2, emission=((0.9, 0.95, 1.0), 4.0))[0]
     M['bag'] = new_material('R_菌床袋', (0.75, 0.62, 0.42), 0.15, transmission=0.3, sss=0.3)[0]
     build_kinbou_materials()
+    build_spawn_bag_materials()
     # ベルトコンベヤまわり
     mat, nt, b = new_material('R_PVCベルト_緑', (0.02, 0.3, 0.17), 0.3, coat=0.2)
     v = tex_coord(nt)
@@ -510,6 +504,34 @@ def build_kinbou_materials():
     bump(nt, b, n, 0.9, 0.003)
     M['kinbou_spawn'] = mat
 
+
+def build_spawn_bag_materials():
+    # 袋入りの種菌: 茶色のおが粉に、白い菌糸のかたまりと小さな白い粒
+    mat, nt, b = new_material('R_種菌_袋', (0.4, 0.32, 0.25), 0.9)
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    oi = nt.nodes.new('ShaderNodeObjectInfo')
+    off = nt.nodes.new('ShaderNodeVectorMath'); off.operation = 'ADD'
+    comb = nt.nodes.new('ShaderNodeCombineXYZ')
+    for i, k in enumerate((13.0, 7.0, 3.0)):
+        nt.links.new(math_node(nt, 'MULTIPLY', oi.outputs['Random'], k), comb.inputs[i])
+    nt.links.new(tc.outputs['Object'], off.inputs[0])
+    nt.links.new(comb.outputs[0], off.inputs[1])
+    v = off.outputs[0]
+    saw = ramp(nt, noise(nt, v, 160, 4, 0.75), [(0.3, (0.22, 0.14, 0.08)), (0.5, (0.45, 0.36, 0.27)),
+                                                 (0.7, (0.68, 0.66, 0.63))])
+    myc = ramp(nt, noise(nt, v, 11, 5, 0.7), [(0.44, (0, 0, 0)), (0.58, (1, 1, 1))])
+    dots = ramp(nt, noise(nt, v, 90, 2, 0.5), [(0.62, (0, 0, 0)), (0.66, (1, 1, 1))])
+    white = math_node(nt, 'MAXIMUM', myc, dots)
+    mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'
+    nt.links.new(map_range(nt, white, 0.0, 1.0, 0.12, 0.95), mix.inputs['Factor'])
+    nt.links.new(saw, mix.inputs[6])
+    mix.inputs[7].default_value = (0.86, 0.85, 0.82, 1.0)
+    nt.links.new(mix.outputs[2], b.inputs['Base Color'])
+    bump(nt, b, math_node(nt, 'ADD', noise(nt, v, 160, 4, 0.75), white), 0.4, 0.003)
+    M['spawn_bag'] = mat
+    M['cap_white'] = new_material('R_キャップ_白', (0.92, 0.92, 0.9), 0.35, sss=0.1)[0]
+    M['cap_pink'] = new_material('R_キャップ_綿栓', (0.9, 0.6, 0.65), 0.8)[0]
+
     # マスキングテープ (紙・クレープ)
     mat, nt, b = new_material('R_マスキングテープ', (0.86, 0.85, 0.74), 0.85)
     v = tex_coord(nt)
@@ -552,12 +574,12 @@ class MB:
         s = [abs(b - a) for a, b in zip(mn, mx)]
         self.box(c, s, mat)
 
-    def cyl(self, p0, p1, r, mat, segs=16, r2=None, smooth=True):
+    def cyl(self, p0, p1, r, mat, segs=16, r2=None, smooth=True, caps=True):
         p0, p1 = Vector(p0), Vector(p1)
         d = p1 - p0
         rot = d.to_track_quat('Z', 'Y').to_matrix().to_4x4()
         m = Matrix.Translation((p0 + p1) / 2) @ rot
-        res = bmesh.ops.create_cone(self.bm, cap_ends=True, segments=segs,
+        res = bmesh.ops.create_cone(self.bm, cap_ends=caps, segments=segs,
                                     radius1=r, radius2=r if r2 is None else r2,
                                     depth=d.length, matrix=m)
         self._assign(res['verts'], mat, smooth)
@@ -1099,9 +1121,42 @@ def asset_pallet(root):
     return c
 
 
+SPAWN_R = 0.053    # 種菌袋の半径 (直径 11cm 弱)
+SPAWN_H = 0.2      # 種菌袋の中身の高さ
+
+
+def spawn_bag(mb, x, y, z, rng):
+    """袋入りの種菌 1 袋 (立てた状態、底の中心が (x, y, z))
+
+    透明の袋におが粉の種菌を詰め、口を白い樹脂のカラーに通してキャップをしたもの。
+    """
+    r, h = SPAWN_R * rng.uniform(0.96, 1.03), SPAWN_H * rng.uniform(0.95, 1.03)
+    # 中身 (底と肩は少し丸める)
+    mb.cyl((x, y, z + 0.012), (x, y, z + h - 0.015), r, M['spawn_bag'], 32)
+    mb.sphere((x, y, z + 0.012), (r, r, 0.012), M['spawn_bag'], 32, 8)
+    mb.sphere((x, y, z + h - 0.015), (r, r, 0.02), M['spawn_bag'], 32, 8)
+    # 袋: 中身に沿った胴と、口元へ絞った余り
+    fr = r + 0.003
+    mb.cyl((x, y, z + 0.012), (x, y, z + h - 0.012), fr, M['film'], 32, caps=False)
+    mb.sphere((x, y, z + 0.012), (fr, fr, 0.0135), M['film'], 32, 8)
+    mb.cyl((x, y, z + h - 0.012), (x, y, z + h + 0.012), fr, M['film'], 24, r2=fr * 0.8, caps=False)
+    mb.cyl((x, y, z + h + 0.012), (x, y, z + h + 0.028), fr * 0.8, M['film'], 24, r2=0.027, caps=False)
+    for k in range(4):   # 絞ったときにできる袋のひだ
+        a = rng.uniform(0, 2 * math.pi)
+        mb.box((x + math.cos(a) * 0.036, y + math.sin(a) * 0.036, z + h + 0.022), (0.04, 0.0015, 0.04), M['film'],
+               rz=a + math.pi / 2 + rng.uniform(-0.3, 0.3))
+    # カラー (つば付きのリング) とキャップ、すき間から見える綿栓
+    top = z + h + 0.026
+    mb.cyl((x, y, top), (x, y, top + 0.005), 0.034, M['cap_white'], 24)
+    mb.cyl((x, y, top + 0.005), (x, y, top + 0.01), 0.026, M['cap_pink'], 20)
+    mb.cyl((x, y, top + 0.01), (x, y, top + 0.032), 0.029, M['cap_white'], 24)
+    mb.cyl((x, y, top + 0.032), (x, y, top + 0.034), 0.027, M['cap_white'], 24)
+
+
 def asset_seed_stack(root):
-    """種菌トレーの段積み (台車付き)"""
-    c = make_asset_collection('_A_種菌トレー', root)
+    """袋入りの種菌を立てて並べた格子カゴ 2 段 (台車付き)"""
+    c = make_asset_collection('_A_種菌カゴ', root)
+    rng = random.Random(44)
     mb = MB()
     W, D = 0.5, 0.4
     # 台車
@@ -1111,21 +1166,31 @@ def asset_seed_stack(root):
             mb.cyl((x, y, 0.0), (x, y, 0.058), 0.028, M['rubber'], 12)
             mb.box((x, y, 0.061), (0.04, 0.04, 0.01), M['steel'])
     z = 0.083
-    th = 0.095
-    for k in range(4):
-        wall = 0.006
-        mb.box((0, 0, z + 0.003), (W - 0.02, D - 0.02, 0.006), M['tray'])
-        for sx, sy, w, d in ((1, 0, wall, D - 0.02), (-1, 0, wall, D - 0.02),
-                             (0, 1, W - 0.02, wall), (0, -1, W - 0.02, wall)):
-            mb.box((sx * (W / 2 - 0.013), sy * (D / 2 - 0.013), z + th / 2), (w, d, th), M['tray'])
-        # 縁
-        mb.box((0, D / 2 - 0.012, z + th - 0.004), (W - 0.01, 0.018, 0.008), M['tray'])
-        mb.box((0, -D / 2 + 0.012, z + th - 0.004), (W - 0.01, 0.018, 0.008), M['tray'])
-        # 中身
-        fill = th * (0.75 if k < 3 else 0.6)
-        mb.box((0, 0, z + 0.006 + fill / 2), (W - 0.045, D - 0.045, fill), M['spawn'])
-        z += th + 0.006
-    mb.build('種菌トレー', c, bevel=0.003)
+    H, t = 0.26, 0.012
+    for k in range(2):
+        # 格子カゴ: 底板、上下の枠、四隅と中間の縦桟 (袋が見えるよう側面は抜く)
+        mb.box((0, 0, z + 0.004), (W - 0.01, D - 0.01, 0.008), M['tray'])
+        for zz, hh in ((z + 0.015, 0.03), (z + H - 0.012, 0.024)):
+            for sy in (-1, 1):
+                mb.box((0, sy * (D / 2 - t / 2), zz), (W, t, hh), M['tray'])
+            for sx in (-1, 1):
+                mb.box((sx * (W / 2 - t / 2), 0, zz), (t, D - 2 * t, hh), M['tray'])
+        for i in range(5):
+            x = -W / 2 + t / 2 + (W - t) * i / 4
+            for sy in (-1, 1):
+                mb.box((x, sy * (D / 2 - t / 2), z + H / 2), (t * 0.9, t * 0.9, H - 0.002), M['tray'])
+        for j in range(1, 3):
+            y = -D / 2 + t / 2 + (D - t) * j / 3
+            for sx in (-1, 1):
+                mb.box((sx * (W / 2 - t / 2), y, z + H / 2), (t * 0.9, t * 0.9, H - 0.002), M['tray'])
+        # 中身: 4 x 3 = 12 袋
+        for i in range(4):
+            for j in range(3):
+                bx = (i - 1.5) * (W - 0.03) / 4 + rng.uniform(-0.004, 0.004)
+                by = (j - 1) * (D - 0.03) / 3 + rng.uniform(-0.004, 0.004)
+                spawn_bag(mb, bx, by, z + 0.008, rng)
+        z += H + 0.002
+    mb.build('種菌カゴ', c)
     return c
 
 
