@@ -1028,8 +1028,8 @@ def asset_pallet(root):
 
 
 def asset_seed_stack(root):
-    """種菌トレーの段積み (台車付き)"""
-    c = make_asset_collection('_A_種菌トレー', root)
+    """菌棒トレーの段積み (台車付き)。各段に菌棒 (菌床袋) を寝かせて並べる"""
+    c = make_asset_collection('_A_菌棒トレー', root)
     mb = MB()
     W, D = 0.5, 0.4
     # 台車
@@ -1049,11 +1049,17 @@ def asset_seed_stack(root):
         # 縁
         mb.box((0, D / 2 - 0.012, z + th - 0.004), (W - 0.01, 0.018, 0.008), M['tray'])
         mb.box((0, -D / 2 + 0.012, z + th - 0.004), (W - 0.01, 0.018, 0.008), M['tray'])
-        # 中身
-        fill = th * (0.75 if k < 3 else 0.6)
-        mb.box((0, 0, z + 0.006 + fill / 2), (W - 0.045, D - 0.045, fill), M['spawn'])
+        # 中身: 菌棒 (最上段だけ 1 本少ない)
+        r = 0.042
+        n = 4 if k < 3 else 3
+        for j in range(n):
+            y = -D / 2 + 0.03 + r + j * (2 * r + 0.004)
+            bz = z + 0.006 + r
+            mb.cyl((-0.19, y, bz), (0.19, y, bz), r, M['bag'], 20)
+            mb.sphere((-0.19, y, bz), (0.012, r * 0.95, r * 0.95), M['bag'], 12, 8)
+            mb.sphere((0.19, y, bz), (0.012, r * 0.95, r * 0.95), M['bag'], 12, 8)
         z += th + 0.006
-    mb.build('種菌トレー', c, bevel=0.003)
+    mb.build('菌棒トレー', c, bevel=0.003)
     return c
 
 
@@ -1353,14 +1359,19 @@ def build_inoculator(ob, coll, A):
     text_mesh('纯电动香菇固体接种机', 0.1, M['sign_text'], mach, (sx + 0.003, (by0 + by1) / 2 + 0.2, (hz0 + hz1) / 2),
               (math.pi / 2, 0, math.pi / 2), 'CENTER', coll)
 
-    # 桟に載った菌床袋
+    # 桟に載った種菌 (おが粉培地の塊と、こぼれた粒)
+    rnd = random.Random(11)
     for k, yy in enumerate(flights):
         if yy < by0 - 0.1 and k % 3 != 2:
             b = MB()
-            b.cyl((-0.24, 0, 0), (0.24, 0, 0), 0.052, M['bag'], 20)
-            b.sphere((-0.24, 0, 0), (0.01, 0.05, 0.05), M['bag'], 12, 8)
-            b.sphere((0.24, 0, 0), (0.01, 0.05, 0.05), M['bag'], 12, 8)
-            bo = b.build('菌床袋', coll, loc=(cx, cy + yy, cz + 0.06))
+            for j in range(5):
+                x = -0.2 + j * 0.1 + rnd.uniform(-0.02, 0.02)
+                b.sphere((x, 0, 0), (rnd.uniform(0.06, 0.08), rnd.uniform(0.04, 0.05), rnd.uniform(0.03, 0.042)),
+                         M['spawn'], 14, 8)
+            for j in range(14):
+                b.sphere((rnd.uniform(-0.26, 0.26), rnd.uniform(-0.05, 0.05), rnd.uniform(-0.02, 0.0)),
+                         (0.012, 0.01, 0.008), M['spawn'], 6, 4)
+            bo = b.build('種菌', coll, loc=(cx, cy + yy, cz + 0.045))
 
 
 def build_conveyor(ob, coll, A):
