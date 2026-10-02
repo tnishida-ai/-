@@ -2066,6 +2066,106 @@ def place_kinbou(coll, A):
             e.rotation_euler = (rng.uniform(-0.7, 0.7), 0.0, math.radians(rng.uniform(-3, 3)))
 
 
+JP_FONTS = ('/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf', '/usr/share/fonts/truetype/fonts-japanese-gothic.ttf',
+            'C:/Windows/Fonts/meiryo.ttc', 'C:/Windows/Fonts/msgothic.ttc',
+            '/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc') + CJK_FONTS
+
+# 名称ラベル: (オブジェクト名の接頭辞, 表示する名称, 文字の大きさ[, 上面からの持ち上げ])
+LABELS = (
+    ('R_接種機', '接種機', 0.16),
+    ('R_コンベヤ', 'コンベヤ', 0.14),
+    ('R_テープ', 'テープ貼り機', 0.1),
+    ('荷_パレット', 'パレット\n【高さ２ｍ】', 0.16),
+    ('R_台', '作業台', 0.1, 2 * KINBOU_R + 0.02),   # 台の上の菌棒より上に出す
+    ('R_種トレー', '種菌', 0.08),
+    ('R_棚_', '棚', 0.16),
+    ('R_ハンガーラック', 'ハンガーラック', 0.09),
+    ('R_CCP', 'CCP', 0.12),
+    ('R_FFU', 'FFU', 0.1),
+    ('R_エアシャワー', 'エアシャワー', 0.13),
+    ('R_靴箱', '靴箱', 0.1),
+)
+
+
+def world_bounds(ob):
+    """コレクションインスタンスも含めたワールド座標の外接箱"""
+    pts = []
+    if ob.type == 'EMPTY' and ob.instance_collection:
+        for o in ob.instance_collection.all_objects:
+            if o.type == 'MESH':
+                pts += [ob.matrix_world @ o.matrix_world @ Vector(c) for c in o.bound_box]
+    else:
+        pts = [ob.matrix_world @ Vector(c) for c in ob.bound_box]
+    return (Vector([min(p[i] for p in pts) for i in range(3)]),
+            Vector([max(p[i] for p in pts) for i in range(3)]))
+
+
+def label_mesh(text, size, mat_text, mat_plate):
+    """白い板の上に紺の文字を載せた水平なラベル (文字はメッシュ化してフォントを同梱しない)"""
+    import os
+    path = next((p for p in JP_FONTS if os.path.exists(p)), None)
+    cu = bpy.data.curves.new('label', 'FONT')
+    cu.body = text
+    if path:
+        cu.font = bpy.data.fonts.load(path, check_existing=True)
+    cu.size = size
+    cu.align_x = 'CENTER'
+    cu.align_y = 'CENTER'
+    cu.space_line = 1.05
+    cu.extrude = 0.0015
+    tmp = bpy.data.objects.new('label', cu)
+    bpy.context.scene.collection.objects.link(tmp)
+    dg = bpy.context.evaluated_depsgraph_get()
+    tme = bpy.data.meshes.new_from_object(tmp.evaluated_get(dg))
+    bpy.data.objects.remove(tmp)
+    bpy.data.curves.remove(cu)
+    bm = bmesh.new()
+    bm.from_mesh(tme)
+    bpy.data.meshes.remove(tme)
+    xs = [v.co.x for v in bm.verts]
+    ys = [v.co.y for v in bm.verts]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    for v in bm.verts:   # 文字の中心を原点に、板の上に載せる
+        v.co.x -= cx
+        v.co.y -= cy
+        v.co.z += 0.0075
+    for f in bm.faces:
+        f.material_index = 0
+    pad = size * 0.3
+    w, h = max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad
+    r = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, 0.003)) @ Matrix.Diagonal((w, h, 0.006, 1)))
+    for f in {f for v in r['verts'] for f in v.link_faces}:
+        f.material_index = 1
+    me = bpy.data.meshes.new('ラベル')
+    bm.to_mesh(me)
+    bm.free()
+    me.materials.append(mat_text)
+    me.materials.append(mat_plate)
+    return me
+
+
+def build_labels(root):
+    """設備ごとの名称ラベル (作業者には付けない)。設備の上面の少し上に水平に置く"""
+    bpy.context.view_layer.update()   # 作ったばかりのオブジェクトの matrix_world を確定させる
+    coll = bpy.data.collections.new('名称ラベル')
+    root.children.link(coll)
+    mat_text = new_material('R_ラベル文字', (0.02, 0.05, 0.16), 0.5)[0]
+    mat_plate = new_material('R_ラベル板', (0.95, 0.95, 0.93), 0.45, emission=((1.0, 1.0, 1.0), 0.15))[0]
+    shared = {}
+    for ob in sorted(bpy.data.collections['リアル化'].objects, key=lambda o: o.name):
+        for prefix, text, size, *lift in LABELS:
+            if not ob.name.startswith(prefix):
+                continue
+            if (text, size) not in shared:
+                shared[(text, size)] = label_mesh(text, size, mat_text, mat_plate)
+            mn, mx = world_bounds(ob)
+            lb = bpy.data.objects.new('ラベル_' + ob.name, shared[(text, size)])
+            lb.location = ((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mx.z + 0.03 + (lift[0] if lift else 0.0))
+            coll.objects.link(lb)
+            break
+    return coll
+
+
 def build_extras(coll):
     # 靴箱 (前室)
     mb = MB()
@@ -2400,6 +2500,7 @@ def main():
     place_kinbou(real, A)
 
     build_extras(real)
+    build_labels(root)
 
 
     setup_world_and_lights(scene, real)
