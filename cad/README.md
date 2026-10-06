@@ -1,11 +1,25 @@
-# CAD 用データ
+# CAD・プレゼン用 3D データ
 
 `layout_realistic.blend10.2_full_name.blend` を CAD で開ける形式に書き出したものです。
 単位はすべて **mm**、Z 軸が上、原点は Blender の原点（コンテナ外周の左下角）です。
 
 ![平面図プレビュー](layout_plan_preview.png)
 
-## ファイル
+## プレゼン用 3D
+
+![プレゼン用 3D プレビュー](layout_presentation_preview.png)
+
+| ファイル | 内容 | 使い方 |
+|---|---|---|
+| `layout_presentation.glb` | 色付きの 3D モデル（約 104 万三角形・30MB）。名称ラベル付き | **PowerPoint**：挿入 → 3D モデル → このファイル。スライド上でドラッグして回転でき、「変形」画面切り替えで回転アニメーションも作れます。Keynote、Windows の 3D ビューアーでも開けます |
+| `layout_presentation.fbx` | 同じモデルの FBX 版（7MB） | 3ds Max / SketchUp / Revit / Twinmotion / Lumion など |
+| `export_presentation.py` | 上記を書き出すスクリプト | 再書き出し用 |
+
+- Blender の模様（床の色ムラ、汚れ、凹凸など）は他のソフトに渡せないため、各マテリアルを**単色＋つや・金属感**に置き換えています。ガラス、青いアクリル、ストレッチフィルムは半透明です。
+- 軽くするため、パレット上の菌棒などは形を間引いています（全体で約 300 万 → 約 104 万三角形）。
+- 照明とカメラは含めていません。表示するソフト側の照明で見え方が変わります。
+
+## CAD 用ファイル
 
 | ファイル | 内容 | 主な用途 |
 |---|---|---|
