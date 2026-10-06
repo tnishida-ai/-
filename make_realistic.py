@@ -18,6 +18,10 @@ from mathutils import Matrix, Vector
 
 random.seed(7)
 
+# 詳細度: `-- 出力.blend --full` で軽量化しない詳細版を作る (既定は Blender で軽く扱える軽量版)
+ARGV = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+FULL_DETAIL = '--full' in ARGV
+
 # ---------------------------------------------------------------------------
 # 基本ユーティリティ
 # ---------------------------------------------------------------------------
@@ -488,9 +492,11 @@ def build_kinbou_materials():
         'R_菌棒', [(0.38, (0.3, 0.32, 0.35)), (0.5, (0.46, 0.47, 0.48)), (0.62, (0.6, 0.6, 0.58))],
         [(0.3, (0.1, 0.055, 0.04)), (0.7, (0.24, 0.13, 0.08))], 0.58, 0.62)
     # パレット積みの菌棒 (接種前): 青みがかった灰色に、黒っぽいおが粉の粒が密に見える
-    M['kinbou_raw'] = substrate_material(
-        'R_菌棒_接種前', [(0.35, (0.18, 0.2, 0.24)), (0.5, (0.29, 0.31, 0.36)), (0.65, (0.44, 0.45, 0.49))],
-        [(0.3, (0.04, 0.035, 0.04)), (0.7, (0.14, 0.1, 0.09))], 0.55, 0.6)
+    # (詳細版は袋のフィルム越しに見えて暗く写るので、地色を明るめにする)
+    raw_base = ([(0.35, (0.24, 0.26, 0.31)), (0.5, (0.38, 0.4, 0.46)), (0.65, (0.56, 0.57, 0.6))] if FULL_DETAIL else
+                [(0.35, (0.18, 0.2, 0.24)), (0.5, (0.29, 0.31, 0.36)), (0.65, (0.44, 0.45, 0.49))])
+    M['kinbou_raw'] = substrate_material('R_菌棒_接種前', raw_base,
+                                         [(0.3, (0.04, 0.035, 0.04)), (0.7, (0.14, 0.1, 0.09))], 0.55, 0.6)
 
     # 袋のフィルム: 透明 + 映り込み、細かいシワ
     mat, nt, b = new_material('R_菌棒フィルム', (0.2, 0.2, 0.2), 0.1, spec=0.8)
@@ -1089,23 +1095,16 @@ KINBOU_L = 0.52    # 菌棒の長さ (袋の口の結束を除く)
 KINBOU_TIE = 0.026  # 両端の結束の飛び出し
 
 
-def asset_kinbou(root):
-    """袋入りの菌棒 (横倒し、軸は X、軸の高さ z=0)
-
-    白い菌糸がまわったおが粉培地を透明の袋に詰めたもの。接種穴の種菌 (茶色) が 3 列並び、
-    上からフィルムで覆ってある。表面には白いマスキングテープを 1 枚貼る。袋の両端は絞って白く結束する。
-    """
-    c = make_asset_collection('_A_菌棒', root)
-    rng = random.Random(26)   # 他の設備の乱数列を変えないよう専用の乱数を使う
-    mb = MB()
+def kinbou_geometry(mb, fill, rng, plugs=True):
+    """菌棒 1 本の形 (中身・接種穴の種菌・袋・結束・テープ)。plugs=False で接種穴なし"""
     r, L = KINBOU_R, KINBOU_L
     # 中身 (端は少し丸める)
-    mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), r, M['kinbou'], 40)
+    mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), r, M[fill], 40)
     for sx in (-1, 1):
-        mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.02, r, r), M['kinbou'], 40, 12)
+        mb.sphere((sx * (L / 2 - 0.02), 0, 0), (0.02, r, r), M[fill], 40, 12)
     # 接種穴の種菌: 3 列 (上から 75°, -75°, 180°)。4 個と 3 個の列を交互にして千鳥にする
     hr, pitch = 0.022, 0.125
-    for ang, n in ((math.radians(75), 4), (math.radians(-75), 3), (math.pi, 4)):
+    for ang, n in ((math.radians(75), 4), (math.radians(-75), 3), (math.pi, 4)) if plugs else ():
         d = Vector((0, -math.sin(ang), math.cos(ang)))
         for k in range(n):
             x = (k - (n - 1) / 2) * pitch
@@ -1122,6 +1121,18 @@ def asset_kinbou(root):
         mb.sphere((sx * (L / 2 + 0.008), 0.006, 0.008), (0.012, 0.016, 0.014), M['tie'], 12, 8)
     # マスキングテープ (袋の上に貼る)
     mb.cyl_patch(0.02, 0.07, fr + 0.0006, math.radians(-14), math.radians(28), M['masking'])
+
+
+def asset_kinbou(root):
+    """袋入りの菌棒 (横倒し、軸は X、軸の高さ z=0)
+
+    白い菌糸がまわったおが粉培地を透明の袋に詰めたもの。接種穴の種菌 (茶色) が 3 列並び、
+    上からフィルムで覆ってある。表面には白いマスキングテープを 1 枚貼る。袋の両端は絞って白く結束する。
+    """
+    c = make_asset_collection('_A_菌棒', root)
+    rng = random.Random(26)   # 他の設備の乱数列を変えないよう専用の乱数を使う
+    mb = MB()
+    kinbou_geometry(mb, 'kinbou', rng)
     mb.build('菌棒', c)
     return c
 
@@ -1129,11 +1140,15 @@ def asset_kinbou(root):
 def asset_kinbou_pallet(root):
     """パレット積み用の接種前の菌棒 (種菌の穴なし) の元形状。軸は X、軸の高さ z=0
 
-    1 パレットに数百本積むので、ストレッチフィルム越しに見える程度の形に絞った軽量版。
+    軽量版 (既定) は、1 パレットに数百本積むのでストレッチフィルム越しに見える程度の形に絞る。
     袋のフィルムは省き (外側のストレッチフィルムが映り込みを受け持つ)、分割数を少なくしている。
     """
     c = make_asset_collection('_A_菌棒_接種前', root)
     mb = MB()
+    if FULL_DETAIL:   # 詳細版: 作業台の菌棒と同じ作り (袋のフィルム付き)、接種穴だけなし
+        kinbou_geometry(mb, 'kinbou_raw', random.Random(27), plugs=False)
+        mb.build('菌棒_接種前', c)
+        return c
     r, L = KINBOU_R, KINBOU_L
     mb.cyl((-L / 2 + 0.02, 0, 0), (L / 2 - 0.02, 0, 0), r, M['kinbou_raw'], 12, caps=False)
     for sx in (-1, 1):
@@ -1157,29 +1172,35 @@ def asset_pallet_load(root, kinbou):
     across = 2 * r + 0.002
     lay = 2 * r - 0.004                     # 段のピッチ (重みで少しつぶれる)
     n_across = 12
-    # 菌棒は 1 パレット分を 1 メッシュにまとめる (数百個のインスタンスより表示が軽い)
+    # 軽量版は 1 パレット分を 1 メッシュにまとめ (数百個のインスタンスより表示が軽い)、見えない菌棒を省く
     src = kinbou.objects[0].data
     logs = bmesh.new()
     for k in range(PALLET_LAYERS):
         z = PALLET_H + r + k * lay
         for i in range(3):
             for j in range(n_across):
-                if k < PALLET_LAYERS - 1 and i == 1 and 0 < j < n_across - 1:
+                if not FULL_DETAIL and k < PALLET_LAYERS - 1 and i == 1 and 0 < j < n_across - 1:
                     continue   # 荷の内側に隠れて見えない菌棒は置かない (表示を軽くする)
                 u = (i - 1) * along + rng.uniform(-0.01, 0.01)
                 w = (j - (n_across - 1) / 2) * across + rng.uniform(-0.002, 0.002)
                 x, y, rz = (u, w, 0.0) if k % 2 == 0 else (w, u, math.pi / 2)
                 m = (Matrix.Translation((x, y, z)) @ Matrix.Rotation(rz + rng.uniform(-0.02, 0.02), 4, 'Z')
                      @ Matrix.Rotation(rng.uniform(-math.pi, math.pi), 4, 'X'))
+                if FULL_DETAIL:   # 詳細版は 1 本ずつのインスタンス
+                    e = instance(kinbou, f'菌棒_積み_{k:02d}_{i}_{j:02d}', c, (0, 0, 0))
+                    e.matrix_world = m
+                    continue
                 n0 = len(logs.verts)
                 logs.from_mesh(src)
                 logs.verts.ensure_lookup_table()
                 bmesh.ops.transform(logs, matrix=m, verts=logs.verts[n0:])
-    me = bpy.data.meshes.new('菌棒_積み')
-    logs.to_mesh(me); logs.free()
-    for mat in src.materials:
-        me.materials.append(mat)
-    c.objects.link(bpy.data.objects.new('菌棒_積み', me))
+    if not FULL_DETAIL:
+        me = bpy.data.meshes.new('菌棒_積み')
+        logs.to_mesh(me)
+        for mat in src.materials:
+            me.materials.append(mat)
+        c.objects.link(bpy.data.objects.new('菌棒_積み', me))
+    logs.free()
     # ストレッチフィルム: 角を丸めた筒を、段の境目で少しくびれさせる
     half = (2 * along + KINBOU_L + 2 * KINBOU_TIE) / 2 + 0.006
     cr = 0.07
@@ -1260,27 +1281,28 @@ def spawn_bag(mb, x, y, z, rng):
 
     透明の袋におが粉の種菌を詰め、口を白い樹脂のカラーに通してキャップをしたもの。
     """
+    seg, ring = (32, 8) if FULL_DETAIL else (16, 4)
     r, h = SPAWN_R * rng.uniform(0.96, 1.03), SPAWN_H * rng.uniform(0.95, 1.03)
     # 中身 (底と肩は少し丸める)
-    mb.cyl((x, y, z + 0.012), (x, y, z + h - 0.015), r, M['spawn_bag'], 16)
-    mb.sphere((x, y, z + 0.012), (r, r, 0.012), M['spawn_bag'], 16, 4)
-    mb.sphere((x, y, z + h - 0.015), (r, r, 0.02), M['spawn_bag'], 16, 4)
+    mb.cyl((x, y, z + 0.012), (x, y, z + h - 0.015), r, M['spawn_bag'], seg)
+    mb.sphere((x, y, z + 0.012), (r, r, 0.012), M['spawn_bag'], seg, ring)
+    mb.sphere((x, y, z + h - 0.015), (r, r, 0.02), M['spawn_bag'], seg, ring)
     # 袋: 中身に沿った胴と、口元へ絞った余り
     fr = r + 0.003
-    mb.cyl((x, y, z + 0.012), (x, y, z + h - 0.012), fr, M['film'], 16, caps=False)
-    mb.sphere((x, y, z + 0.012), (fr, fr, 0.0135), M['film'], 16, 4)
-    mb.cyl((x, y, z + h - 0.012), (x, y, z + h + 0.012), fr, M['film'], 16, r2=fr * 0.8, caps=False)
-    mb.cyl((x, y, z + h + 0.012), (x, y, z + h + 0.028), fr * 0.8, M['film'], 16, r2=0.027, caps=False)
+    mb.cyl((x, y, z + 0.012), (x, y, z + h - 0.012), fr, M['film'], seg, caps=False)
+    mb.sphere((x, y, z + 0.012), (fr, fr, 0.0135), M['film'], seg, ring)
+    mb.cyl((x, y, z + h - 0.012), (x, y, z + h + 0.012), fr, M['film'], seg, r2=fr * 0.8, caps=False)
+    mb.cyl((x, y, z + h + 0.012), (x, y, z + h + 0.028), fr * 0.8, M['film'], seg, r2=0.027, caps=False)
     for k in range(4):   # 絞ったときにできる袋のひだ
         a = rng.uniform(0, 2 * math.pi)
         mb.box((x + math.cos(a) * 0.036, y + math.sin(a) * 0.036, z + h + 0.022), (0.04, 0.0015, 0.04), M['film'],
                rz=a + math.pi / 2 + rng.uniform(-0.3, 0.3))
     # カラー (つば付きのリング) とキャップ、すき間から見える綿栓
     top = z + h + 0.026
-    mb.cyl((x, y, top), (x, y, top + 0.005), 0.034, M['cap_white'], 16)
-    mb.cyl((x, y, top + 0.005), (x, y, top + 0.01), 0.026, M['cap_pink'], 12)
-    mb.cyl((x, y, top + 0.01), (x, y, top + 0.032), 0.029, M['cap_white'], 16)
-    mb.cyl((x, y, top + 0.032), (x, y, top + 0.034), 0.027, M['cap_white'], 16)
+    mb.cyl((x, y, top), (x, y, top + 0.005), 0.034, M['cap_white'], seg)
+    mb.cyl((x, y, top + 0.005), (x, y, top + 0.01), 0.026, M['cap_pink'], seg)
+    mb.cyl((x, y, top + 0.01), (x, y, top + 0.032), 0.029, M['cap_white'], seg)
+    mb.cyl((x, y, top + 0.032), (x, y, top + 0.034), 0.027, M['cap_white'], seg)
 
 
 def asset_seed_stack(root):
@@ -2528,7 +2550,7 @@ def main():
 
 if __name__ == '__main__':
     main()
-    argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-    if argv:
-        bpy.ops.wm.save_as_mainfile(filepath=argv[0], compress=True)
-        print('saved', argv[0])
+    out = [a for a in ARGV if not a.startswith('--')]
+    if out:
+        bpy.ops.wm.save_as_mainfile(filepath=out[0], compress=True)
+        print('saved', out[0], '(詳細版)' if FULL_DETAIL else '(軽量版)')

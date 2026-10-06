@@ -24,7 +24,8 @@
 
 ## ファイル
 
-- `layout_realistic.blend` … 完成シーン（Blender 5.0 で保存。5.x でそのまま開けます）
+- `layout_realistic.blend` … 完成シーン・軽量版（Blender 5.0 で保存。5.x でそのまま開けます）。約280万ポリゴンで、Blender 上で軽く扱えます
+- `layout_realistic_full.blend` … 完成シーン・詳細版（軽量化なし）。約5,750万ポリゴンで、パレットの菌棒も1本ずつ袋のフィルム付きで作り、荷の内側の菌棒も省いていません。開く・動かすのに重いので、高品質なレンダー向けです
 - `make_realistic.py` … 変換スクリプト。元の .blend に対して何度でも再実行できます
 - `renders/` … レンダー画像
 
@@ -90,5 +91,6 @@ GPUがある場合は「プリファレンス → システム → Cycles レン
 ## スクリプトの再実行
 
 ```
-blender -b 元ファイル.blend -P make_realistic.py -- 出力.blend
+blender -b 元ファイル.blend -P make_realistic.py -- 出力.blend          # 軽量版
+blender -b 元ファイル.blend -P make_realistic.py -- 出力.blend --full   # 詳細版
 ```
