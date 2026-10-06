@@ -1,7 +1,7 @@
 # CAD・プレゼン用 3D データ
 
-`layout_realistic.blend10.2_full_name.blend` を CAD で開ける形式に書き出したものです。
-単位はすべて **mm**、Z 軸が上、原点は Blender の原点（コンテナ外周の左下角）です。
+`layout_realistic.blend10.2_full_name.blend` を CAD やプレゼンで使える形式に書き出したものです。
+CAD 用ファイルは単位 **mm**、Z 軸が上、原点は Blender の原点（コンテナ外周の左下角）です。プレゼン用（GLB / FBX）は各ソフトの標準に合わせて単位 m・Y 軸が上で書き出しています。
 
 ![平面図プレビュー](layout_plan_preview.png)
 
