@@ -9,6 +9,7 @@ layout_realistic*.blend をプレゼン用の 3D モデルに書き出すスク�
     layout_presentation.glb   PowerPoint の「挿入 → 3D モデル」、Keynote、Windows の 3D ビューアー、
                               Web ビューア、Twinmotion / Lumion / Unity など
     layout_presentation.fbx   3ds Max / SketchUp / Revit / Twinmotion / Lumion など
+    layout_light.obj/.mtl     FreeCAD / Fusion 用の軽量メッシュ (単位 mm、Z 上向き、設備ごとに分割)
 
 Blender のマテリアルはプロシージャル (ノードで模様を作る) なので、そのままでは他のソフトに
 色が渡りません。書き出す前に、各マテリアルを「基本色・粗さ・金属・透明度」だけの単純な
@@ -26,7 +27,7 @@ os.makedirs(OUT, exist_ok=True)
 bpy.ops.wm.open_mainfile(filepath=SRC)
 
 # 間引く割合 (メッシュ名: 残す割合)。合計を 300 万 → 約 100 万三角形にする
-DECIMATE = {'菌棒_積み': 0.12, '種菌カゴ': 0.3, '菌床トレー': 0.5, '菌棒': 0.5}
+DECIMATE = {'菌棒_積み': 0.35, '種菌カゴ': 0.3, '菌床トレー': 0.5, '菌棒': 0.5}
 
 # 透けて見せたいもの (マテリアル名: 不透明度)
 ALPHA = {'R_ガラス': 0.15, 'R_青アクリル': 0.45, 'R_ストレッチフィルム': 0.3}
@@ -123,3 +124,34 @@ bpy.ops.export_scene.fbx(
     apply_scale_options='FBX_SCALE_ALL', axis_forward='-Z', axis_up='Y',
     path_mode='STRIP', bake_anim=False)
 print('書き出し:', fbx)
+
+# ---------------------------------------------------------------------------
+# FreeCAD / Fusion 用の軽量 OBJ (単位 mm、Z 上向き、設備ごとのオブジェクト、色は MTL)
+# ---------------------------------------------------------------------------
+# 面取りを切り、フィルムの中の菌棒は省いて (フィルムは不透明にする)、さらに間引く
+LIGHT_DECIMATE = {'種菌カゴ': 0.15, '菌床トレー': 0.3, '菌棒': 0.3}
+for ob in bpy.data.objects:
+    for m in ob.modifiers:
+        if m.type == 'BEVEL':
+            m.show_viewport = m.show_render = False
+for name, ratio in LIGHT_DECIMATE.items():
+    ob = bpy.data.objects.get(name)
+    if ob is not None:
+        m = ob.modifiers.get('プレゼン用_間引き') or ob.modifiers.new('プレゼン用_間引き', 'DECIMATE')
+        m.ratio = ratio
+ob = bpy.data.objects.get('菌棒_積み')
+if ob is not None:
+    bpy.data.objects.remove(ob, do_unlink=True)
+film = bpy.data.materials.get('R_ストレッチフィルム')
+if film is not None:
+    b = next(n for n in film.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+    b.inputs['Alpha'].default_value = 1.0
+    film.diffuse_color = (*film.diffuse_color[:3], 1.0)
+
+obj = os.path.join(OUT, 'layout_light.obj')
+bpy.ops.wm.obj_export(
+    filepath=obj, export_eval_mode='DAG_EVAL_RENDER', apply_modifiers=True,
+    global_scale=1000.0, forward_axis='Y', up_axis='Z',
+    export_materials=True, export_uv=False, export_normals=False,
+    export_object_groups=False, path_mode='STRIP')
+print('書き出し:', obj)
